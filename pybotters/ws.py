@@ -190,6 +190,7 @@ class Heartbeat:
         while not ws.closed:
             await ws.send_str('{"op":"ping"}')
             await asyncio.sleep(30.0)
+            await asyncio.sleep(20.0)
 
     @staticmethod
     async def bitbank(ws: aiohttp.ClientWebSocketResponse):
