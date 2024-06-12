@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
-from ..store import DataStore, DataStoreManager
+from ..store import DataStore, DataStoreCollection
 from ..typedefs import Item
 from ..ws import ClientWebSocketResponse
 
 
-class bitbankDataStore(DataStoreManager):
+class bitbankDataStore(DataStoreCollection):
+    """bitbank の DataStoreCollection クラス"""
+
     def _init(self) -> None:
-        self.create("transactions", datastore_class=Transactions)
-        self.create("depth", datastore_class=Depth)
-        self.create("ticker", datastore_class=Ticker)
+        self._create("transactions", datastore_class=Transactions)
+        self._create("depth", datastore_class=Depth)
+        self._create("ticker", datastore_class=Ticker)
 
     def _onmessage(self, msg: str, ws: ClientWebSocketResponse) -> None:
         if msg.startswith("42"):
@@ -28,15 +29,28 @@ class bitbankDataStore(DataStoreManager):
 
     @property
     def transactions(self) -> "Transactions":
-        return self.get("transactions", Transactions)
+        """transactions channel.
+
+        https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-stream.md#transactions
+        """
+        return self._get("transactions", Transactions)
 
     @property
     def depth(self) -> "Depth":
-        return self.get("depth", Depth)
+        """depth channel.
+
+        * https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-stream.md#depth-diff
+        * https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-stream.md#depth-whole
+        """
+        return self._get("depth", Depth)
 
     @property
     def ticker(self) -> "Ticker":
-        return self.get("ticker", Ticker)
+        """ticker channel.
+
+        https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-stream.md#ticker
+        """
+        return self._get("ticker", Ticker)
 
 
 class Transactions(DataStore):
@@ -51,36 +65,36 @@ class Transactions(DataStore):
 
 class Depth(DataStore):
     _KEYS = ["pair", "side", "price"]
-    _BDSIDE = {"sell": "asks", "buy": "bids"}
 
     def _init(self) -> None:
-        self.timestamp: Optional[int] = None
+        self.timestamp: int | None = None
 
-    def sorted(self, query: Optional[Item] = None) -> dict[str, list[list[str]]]:
-        if query is None:
-            query = {}
-        result = {"asks": [], "bids": []}
-        for item in self:
-            if all(k in item and query[k] == item[k] for k in query):
-                result[self._BDSIDE[item["side"]]].append([item["price"], item["size"]])
-        result["asks"].sort(key=lambda x: float(x[0]))
-        result["bids"].sort(key=lambda x: float(x[0]), reverse=True)
-        return result
+    def sorted(
+        self, query: Item | None = None, limit: int | None = None
+    ) -> dict[str, list[Item]]:
+        return self._sorted(
+            item_key="side",
+            item_asc_key="asks",
+            item_desc_key="bids",
+            sort_key="price",
+            query=query,
+            limit=limit,
+        )
 
     def _onmessage(self, room_name: str, data: list[Item]) -> None:
         if "whole" in room_name:
             pair = room_name.replace("depth_whole_", "")
             result = self.find({"pair": pair})
             self._delete(result)
-            tuples = (("bids", "buy"), ("asks", "sell"))
+            tuples = (("bids", "bids"), ("asks", "asks"))
             self.timestamp = data["timestamp"]
         else:
             pair = room_name.replace("depth_diff_", "")
-            tuples = (("b", "buy"), ("a", "sell"))
+            tuples = (("b", "bids"), ("a", "asks"))
             self.timestamp = data["t"]
 
-        for boardside, side in tuples:
-            for item in data[boardside]:
+        for side_item, side in tuples:
+            for item in data[side_item]:
                 if item[1] != "0":
                     self._update(
                         [
@@ -88,7 +102,7 @@ class Depth(DataStore):
                                 "pair": pair,
                                 "side": side,
                                 "price": item[0],
-                                "size": item[1],
+                                "amount": item[1],
                             }
                         ]
                     )

@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Optional
+from typing import Any, Awaitable
 
 import aiohttp
 
-from ..store import DataStore, DataStoreManager
+from ..store import DataStore, DataStoreCollection
 from ..typedefs import Item
 from ..ws import ClientWebSocketResponse
 
 
-class CoincheckDataStore(DataStoreManager):
+class CoincheckDataStore(DataStoreCollection):
+    """Coincheck の DataStoreCollection クラス"""
+
     def _init(self) -> None:
-        self.create("trades", datastore_class=Trades)
-        self.create("orderbook", datastore_class=Orderbook)
+        self._create("trades", datastore_class=Trades)
+        self._create("orderbook", datastore_class=Orderbook)
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
+        """Initialize DataStore from HTTP response data.
+
+        対応エンドポイント
+
+        - GET /api/order_books (:attr:`.CoincheckDataStore.orderbook`)
+        """
         for f in asyncio.as_completed(aws):
             resp = await f
             data = await resp.json()
@@ -32,11 +40,19 @@ class CoincheckDataStore(DataStoreManager):
 
     @property
     def trades(self) -> "Trades":
-        return self.get("trades", Trades)
+        """trades channel.
+
+        https://coincheck.com/ja/documents/exchange/api#websocket-trades
+        """
+        return self._get("trades", Trades)
 
     @property
     def orderbook(self) -> "Orderbook":
-        return self.get("orderbook", Orderbook)
+        """orderbook channel.
+
+        https://coincheck.com/ja/documents/exchange/api#websocket-order-book
+        """
+        return self._get("orderbook", Orderbook)
 
 
 class Trades(DataStore):
@@ -64,20 +80,21 @@ class Orderbook(DataStore):
     _KEYS = ["pair", "side", "rate"]
 
     def _init(self):
-        self.last_update_at: Optional[str] = None
+        self.last_update_at: str | None = None
 
-    def sorted(self, query: Optional[Item] = None) -> dict[str, list[list[str]]]:
-        if query is None:
-            query = {}
-        result = {"asks": [], "bids": []}
-        for item in self:
-            if all(k in item and query[k] == item[k] for k in query):
-                result[item["side"]].append([item["rate"], item["amount"]])
-        result["asks"].sort(key=lambda x: float(x[0]))
-        result["bids"].sort(key=lambda x: float(x[0]), reverse=True)
-        return result
+    def sorted(
+        self, query: Item | None = None, limit: int | None = None
+    ) -> dict[str, list[Item]]:
+        return self._sorted(
+            item_key="side",
+            item_asc_key="asks",
+            item_desc_key="bids",
+            sort_key="rate",
+            query=query,
+            limit=limit,
+        )
 
-    def _onresponse(self, pair: Optional[str], data: dict[list[str]]) -> None:
+    def _onresponse(self, pair: str | None, data: dict[list[str]]) -> None:
         if pair is None:
             pair = "btc_jpy"
         self._find_and_delete({"pair": pair})

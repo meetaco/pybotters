@@ -1,46 +1,141 @@
-[tool.poetry]
+[build-system]
+requires = ["hatchling", "hatch-fancy-pypi-readme", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
 name = "pybotters"
-version = "0.16.0"
-description = "An advanced API client for python botters."
+dynamic = ["version", "readme"]
+description = "An advanced API client for python crypto bot traders"
+requires-python = ">=3.8"
 license = "MIT"
-authors = ["MtkN1 <51289448+MtkN1@users.noreply.github.com>"]
-readme = "README.md"
-repository = "https://github.com/MtkN1/pybotters"
-documentation = "https://pybotters.readthedocs.io/ja/latest/"
+keywords = ["aiohttp", "crypto", "exchange", "trading"]
+authors = [
+  { name = "MtkN1", email = "51289448+MtkN1@users.noreply.github.com" },
+]
 classifiers = [
-    "Framework :: AsyncIO",
-    "Framework :: aiohttp",
-    "Topic :: Internet :: WWW/HTTP",
-    "Topic :: Office/Business :: Financial :: Investment",
-    "Development Status :: 4 - Beta",
-    "Operating System :: OS Independent",
-    "Environment :: Web Environment",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Financial and Insurance Industry",
-    "Natural Language :: Japanese",
-    "Typing :: Typed"
+  "Development Status :: 5 - Production/Stable",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Framework :: AsyncIO",
+  "Framework :: aiohttp",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Operating System :: POSIX",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Office/Business :: Financial :: Investment",
+  "Natural Language :: Japanese",
+  "Typing :: Typed",
+]
+dependencies = [
+  "aiohttp>=3.7.0",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-mock",
+  "pytest-asyncio",
+  "pytest-aiohttp",
+  "pytest-freezer",
+  "pytest-cov",
+]
+lint = [
+  "ruff",
+]
+dev = [
+  "pybotters[test]",
+  "pybotters[lint]",
+  "rich",
+]
+docs = [
+  "Sphinx",
+  "furo",
+  "sphinx-copybutton",
+  "sphinx-new-tab-link",
+  "sphinx-autobuild",
+]
 
-[tool.poetry.dependencies]
-python = "^3.7"
-aiohttp = "^3.7.4"
-rich = "^10.1.0"
-typing-extensions = { version = ">=3.7.4", python = "<3.8" }
-python-dateutil = "^2.8.2"
+[project.urls]
+Documentation = "https://pybotters.readthedocs.io/ja/stable/"
+Repository = "https://github.com/pybotters/pybotters"
 
-[tool.poetry.dev-dependencies]
-pytest = "^6.2.3"
-pytest-mock = "^3.5.1"
-pytest-asyncio = "^0.14.0"
-pytest-aiohttp = "^0.3.0"
-asyncmock = "^0.4.2"
-pytest-freezegun = "^0.4.2"
-toml = "^0.10.2"
-black = "^22.1.0"
-flake8 = "^5.0.0"
-isort = "^5.10.0"
+[tool.hatch.version]
+source = "vcs"
 
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.hatch.version.raw-options]
+version_scheme = "python-simplified-semver"
+local_scheme = "no-local-version"
+
+[tool.hatch.envs.default]
+features = ["dev"]
+python = "3.8"
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "coverage run -m pytest {args:tests}"
+cov-report = [
+  "- coverage combine",
+  "coverage report -m",
+]
+htmlcov = [
+  "- coverage combine",
+  "- coverage html",
+  "python -m http.server -d htmlcov",
+]
+fmt = [
+    "ruff format",
+    "ruff check --fix-only",
+]
+lint = [
+    "ruff format --check",
+    "ruff check",
+]
+
+[tool.hatch.envs.all]
+features = ["test"]
+[[tool.hatch.envs.all.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+[tool.hatch.envs.lint]
+features = ["lint"]
+skip-install = true
+
+[tool.hatch.envs.docs]
+features = ["docs"]
+template = "docs"
+[tool.hatch.envs.docs.scripts]
+build = "sphinx-build -M html docs docs/_build"
+autobuild = "sphinx-autobuild docs docs/_build/html"
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[tool.coverage.run]
+source_pkgs = ["pybotters", "tests"]
+# branch = true  # TODO: Branch coverage measurement
+parallel = true
+omit = [
+  "pybotters/models/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+fail_under = 100.0
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I"]
+ignore = ["E501"]

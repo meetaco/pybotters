@@ -4,36 +4,35 @@ import asyncio
 import copy
 import uuid
 from dataclasses import dataclass
-from typing import Any, Hashable, Iterator, Optional, Type, TypeVar, cast
+from typing import Any, Hashable, Iterator, Literal, Type, TypeVar, cast
 
 from .typedefs import Item
 from .ws import ClientWebSocketResponse
 
 
 class DataStore:
+    """Abstract DataStore class."""
+
     _KEYS = []
     _MAXLEN = 9999
 
     def __init__(
         self,
-        name: Optional[str] = None,
-        keys: Optional[list[str]] = None,
-        data: Optional[list[Item]] = None,
-        *,
-        auto_cast: bool = False,
+        name: str | None = None,
+        keys: list[str] | None = None,
+        data: list[Item] | None = None,
     ) -> None:
         self.name: str = name
         self._data: dict[uuid.UUID, Item] = {}
         self._index: dict[int, uuid.UUID] = {}
         self._keys: tuple[str, ...] = tuple(keys if keys else self._KEYS)
-        self._events: dict[asyncio.Event, list[Item]] = {}
+        self._events: list[asyncio.Event] = []
         self._queues: list[asyncio.Queue] = []
-        self._auto_cast = auto_cast
         if data is None:
             data = []
         self._insert(data)
         if hasattr(self, "_init"):
-            getattr(self, "_init")()
+            self._init()
 
     def __len__(self) -> int:
         return len(self._data)
@@ -48,23 +47,9 @@ class DataStore:
     def _hash(item: dict[str, Hashable]) -> int:
         return hash(tuple(item.items()))
 
-    @staticmethod
-    def _cast_item(item: dict[str, Hashable]) -> None:
-        for k in item:
-            if isinstance(item[k], str):
-                try:
-                    item[k] = int(item[k])
-                except ValueError:
-                    try:
-                        item[k] = float(item[k])
-                    except ValueError:
-                        pass
-
     def _insert(self, data: list[Item]) -> None:
         if self._keys:
             for item in data:
-                if self._auto_cast:
-                    self._cast_item(item)
                 try:
                     keyitem = {k: item[k] for k in self._keys}
                 except KeyError:
@@ -82,20 +67,15 @@ class DataStore:
             self._sweep_with_key()
         else:
             for item in data:
-                if self._auto_cast:
-                    self._cast_item(item)
                 _id = uuid.uuid4()
                 self._data[_id] = item
                 self._put("insert", None, item)
             self._sweep_without_key()
-        # !TODO! This behaviour might be undesirable.
-        self._set(data)
+        self._set()
 
     def _update(self, data: list[Item]) -> None:
         if self._keys:
             for item in data:
-                if self._auto_cast:
-                    self._cast_item(item)
                 try:
                     keyitem = {k: item[k] for k in self._keys}
                 except KeyError:
@@ -113,20 +93,15 @@ class DataStore:
             self._sweep_with_key()
         else:
             for item in data:
-                if self._auto_cast:
-                    self._cast_item(item)
                 _id = uuid.uuid4()
                 self._data[_id] = item
                 self._put("update", None, item)
             self._sweep_without_key()
-        # !TODO! This behaviour might be undesirable.
-        self._set(data)
+        self._set()
 
     def _delete(self, data: list[Item]) -> None:
         if self._keys:
             for item in data:
-                if self._auto_cast:
-                    self._cast_item(item)
                 try:
                     keyitem = {k: item[k] for k in self._keys}
                 except KeyError:
@@ -137,8 +112,7 @@ class DataStore:
                         self._put("delete", item, self._data[self._index[keyhash]])
                         del self._data[self._index[keyhash]]
                         del self._index[keyhash]
-        # !TODO! This behaviour might be undesirable.
-        self._set(data)
+        self._set()
 
     def _remove(self, uuids: list[uuid.UUID]) -> None:
         if self._keys:
@@ -154,15 +128,14 @@ class DataStore:
                 if _id in self._data:
                     self._put("delete", None, self._data[_id])
                     del self._data[_id]
-        # !TODO! This behaviour might be undesirable.
-        self._set([])
+        self._set()
 
     def _clear(self) -> None:
         for item in self:
             self._put("delete", None, item)
         self._data.clear()
         self._index.clear()
-        self._set([])
+        self._set()
 
     def _sweep_with_key(self) -> None:
         if len(self._data) > self._MAXLEN:
@@ -181,7 +154,16 @@ class DataStore:
             for k in keys:
                 del self._data[k]
 
-    def get(self, item: Item) -> Optional[Item]:
+    def get(self, item: Item) -> Item | None:
+        """DataStore から Item を取得します。
+
+        Args:
+            item: DataStore のキー (:attr:`.DataStore._KES`) を指定する辞書
+
+        Returns:
+            キーに一致するアイテムがあればそのアイテムを返します。
+            なければ None を返します
+        """
         if self._keys:
             try:
                 keyitem = {k: item[k] for k in self._keys}
@@ -192,7 +174,7 @@ class DataStore:
                 if keyhash in self._index:
                     return self._data[self._index[keyhash]]
 
-    def _pop(self, item: Item) -> Optional[Item]:
+    def _pop(self, item: Item) -> Item | None:
         if self._keys:
             try:
                 keyitem = {k: item[k] for k in self._keys}
@@ -206,7 +188,16 @@ class DataStore:
                     del self._index[keyhash]
                     return ret
 
-    def find(self, query: Optional[Item] = None) -> list[Item]:
+    def find(self, query: Item | None = None) -> list[Item]:
+        """DataStore から Item のリストを取得します。
+
+        Args:
+            query: DataStore をフィルタするクエリ辞書
+
+        Returns:
+            クエリの指定がなければ全件データを返します。
+            クエリの指定があれば、それに一致するデータを返します
+        """
         if query:
             return [
                 item
@@ -216,7 +207,7 @@ class DataStore:
         else:
             return list(self)
 
-    def _find_with_uuid(self, query: Optional[Item] = None) -> dict[uuid.UUID, Item]:
+    def _find_with_uuid(self, query: Item | None = None) -> dict[uuid.UUID, Item]:
         if query is None:
             query = {}
         if query:
@@ -228,7 +219,7 @@ class DataStore:
         else:
             return self._data
 
-    def _find_and_delete(self, query: Optional[Item] = None) -> list[Item]:
+    def _find_and_delete(self, query: Item | None = None) -> list[Item]:
         if query is None:
             query = {}
         if query:
@@ -244,28 +235,58 @@ class DataStore:
             self._clear()
             return ret
 
-    def _set(self, data: Optional[list[Item]] = None) -> None:
-        if data is None:
-            data = []
+    def _sorted(
+        self,
+        item_key: str,
+        item_asc_key: str,
+        item_desc_key: str,
+        sort_key: str,
+        query: Item | None = None,
+        limit: int | None = None,
+    ) -> dict[str, list[float]]:
+        if query is None:
+            query = {}
+
+        result = {item_asc_key: [], item_desc_key: []}
+
+        for item in self:
+            if all(k in item and query[k] == item[k] for k in query):
+                result[item[item_key]].append(item)
+
+        result[item_asc_key].sort(key=lambda x: float(x[sort_key]))
+        result[item_desc_key].sort(key=lambda x: float(x[sort_key]), reverse=True)
+
+        if limit:
+            result[item_asc_key] = result[item_asc_key][:limit]
+            result[item_desc_key] = result[item_desc_key][:limit]
+
+        return result
+
+    def _set(self) -> None:
         for event in self._events:
             event.set()
-            self._events[event].extend(data)
+        self._events.clear()
 
-    async def wait(self) -> list[Item]:
+    async def wait(self) -> None:
+        """DataStore にデータの変更があるまで待機します。
+
+        Usage example: :ref:`wait`
+        """
         event = asyncio.Event()
-        ret = []
-        self._events[event] = ret
+        self._events.append(event)
         await event.wait()
-        del self._events[event]
-        return ret
 
-    def _put(self, operation: str, source: Optional[Item], item: Item) -> None:
+    def _put(self, operation: str, source: Item | None, item: Item) -> None:
         for queue in self._queues:
             queue.put_nowait(
                 StoreChange(self, operation, copy.deepcopy(source), copy.deepcopy(item))
             )
 
     def watch(self) -> "StoreStream":
+        """DataStore の更新データをストリームします。
+
+        Usage example: :ref:`watch`
+        """
         return StoreStream(self)
 
 
@@ -274,13 +295,29 @@ TDataStore = TypeVar("TDataStore", bound=DataStore)
 
 @dataclass
 class StoreChange:
+    """DataStore の変更データクラス
+
+    Attributes:
+        store: 変更対象の DataStore
+        operation: 変更オペレーション
+        source: 変更に影響したデータ。 なければ None が格納されます
+        data: 変更されたデータ
+
+    Usage example: :ref:`watch`
+    """
+
     store: DataStore
-    operation: str
-    source: Optional[Item]
+    operation: Literal["insert", "update", "delete"]
+    source: Item | None
     data: Item
 
 
 class StoreStream:
+    """DataStore の変更ストリーム
+
+    Usage example: :ref:`watch`
+    """
+
     def __init__(self, store: "DataStore") -> None:
         self._queue = asyncio.Queue()
         store._queues.append(self._queue)
@@ -305,50 +342,54 @@ class StoreStream:
         return await self.get()
 
 
-class DataStoreManager:
-    """
-    データストアマネージャーの抽象クラスです。 データストアの作成・参照・ハンドリングなどの役割を持ちます。 それぞれの取引所のクラスが継承します。
+class DataStoreCollection:
+    """Abstract DataStoreCollection class.
+
+    DataStore のコレクションクラスです。
+    DataStore を作成することができ、 1 つまたは複数の DataStore を管理します。
     """
 
-    def __init__(self, auto_cast: bool = False) -> None:
+    def __init__(self) -> None:
         self._stores: dict[str, DataStore] = {}
         self._events: list[asyncio.Event] = []
         self._iscorofunc = asyncio.iscoroutinefunction(self._onmessage)
-        self._auto_cast = auto_cast
         if hasattr(self, "_init"):
-            getattr(self, "_init")()
+            self._init()
 
-    def __getitem__(self, name: str) -> Optional["DataStore"]:
+    def __getitem__(self, name: str) -> DataStore | None:
         return self._stores[name]
 
     def __contains__(self, name: str) -> bool:
         return name in self._stores
 
-    def create(
+    def _create(
         self,
         name: str,
         *,
-        keys: Optional[list[str]] = None,
-        data: Optional[list[Item]] = None,
+        keys: list[str] | None = None,
+        data: list[Item] | None = None,
         datastore_class: Type[DataStore] = DataStore,
     ) -> None:
         if keys is None:
             keys = []
         if data is None:
             data = []
-        self._stores[name] = datastore_class(
-            name, keys, data, auto_cast=self._auto_cast
-        )
+        self._stores[name] = datastore_class(name, keys, data)
 
-    def get(self, name: str, type: Type[TDataStore]) -> TDataStore:
+    def _get(self, name: str, type: Type[TDataStore]) -> TDataStore:
         return cast(type, self._stores.get(name))
 
     def _onmessage(self, msg: Any, ws: ClientWebSocketResponse) -> None:
         print(msg)
 
     def onmessage(self, msg: Any, ws: ClientWebSocketResponse) -> None:
-        """
-        Clientクラスws_connectメソッドの引数send_jsonに渡すハンドラです。
+        """WebSocket message handler.
+
+        :meth:`.Client.ws_connect` に渡すコールバックです。
+
+        Args:
+            msg: WebSocket メッセージ
+            ws: WebSocket レスポンスクラス
         """
         self._onmessage(msg, ws)
         self._set()
@@ -359,9 +400,7 @@ class DataStoreManager:
         self._events.clear()
 
     async def wait(self) -> None:
-        """
-        非同期メソッド。onmessageのイベントがあるまで待機します。
-        """
+        """DataStoreCollection の onmessage ハンドラが呼び出しされるまで待機します。"""
         event = asyncio.Event()
         self._events.append(event)
         await event.wait()

@@ -2,37 +2,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Optional
+from typing import Awaitable
 
 import aiohttp
 
-from ..store import DataStore, DataStoreManager
+from ..store import DataStore, DataStoreCollection
 from ..typedefs import Item
 from ..ws import ClientWebSocketResponse
 
 logger = logging.getLogger(__name__)
 
 
-class BitgetDataStore(DataStoreManager):
-    """
-    Bitgetのデータストアマネージャー
-    https://bitgetlimited.github.io/apidoc/en/mix/#websocketapi
-    """
+class BitgetDataStore(DataStoreCollection):
+    """Bitget の DataStoreCollection クラス"""
 
     def _init(self) -> None:
-        self.create("trade", datastore_class=Trade)
-        self.create("orderbook", datastore_class=OrderBook)
-        self.create("ticker", datastore_class=Ticker)
-        self.create("candlesticks", datastore_class=CandleSticks)
-        self.create("account", datastore_class=Account)
-        self.create("orders", datastore_class=Orders)
-        self.create("positions", datastore_class=Positions)
+        self._create("trade", datastore_class=Trade)
+        self._create("orderbook", datastore_class=OrderBook)
+        self._create("ticker", datastore_class=Ticker)
+        self._create("candlesticks", datastore_class=CandleSticks)
+        self._create("account", datastore_class=Account)
+        self._create("orders", datastore_class=Orders)
+        self._create("positions", datastore_class=Positions)
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
-        """
+        """Initialize DataStore from HTTP response data.
+
         対応エンドポイント
 
-        - GET /api/mix/v1/order/current (DataStore: orders)
+        - GET /api/mix/v1/order/current (:attr:`.BitgetDataStore.orders`)
         """
         for f in asyncio.as_completed(aws):
             resp = await f
@@ -70,31 +68,67 @@ class BitgetDataStore(DataStoreManager):
 
     @property
     def trade(self) -> "Trade":
-        return self.get("trade", Trade)
+        """trade channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/spot/#trades-channel
+        * https://bitgetlimited.github.io/apidoc/en/mix/#trades-channel
+        """
+        return self._get("trade", Trade)
 
     @property
     def orderbook(self) -> "OrderBook":
-        return self.get("orderbook", OrderBook)
+        """books channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/spot/#depth-channel
+        * https://bitgetlimited.github.io/apidoc/en/mix/#order-book-channel
+        """
+        return self._get("orderbook", OrderBook)
 
     @property
     def ticker(self):
-        return self.get("ticker", Ticker)
+        """ticker channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/spot/#tickers-channel
+        * https://bitgetlimited.github.io/apidoc/en/mix/#tickers-channel
+        """
+        return self._get("ticker", Ticker)
 
     @property
     def candlesticks(self) -> "CandleSticks":
-        return self.get("candlesticks", CandleSticks)
+        """candle1m channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/spot/#candlesticks-channel
+        * https://bitgetlimited.github.io/apidoc/en/mix/#candlesticks-channel
+        """
+        return self._get("candlesticks", CandleSticks)
 
     @property
     def account(self) -> "Account":
-        return self.get("account", Account)
+        """account channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/mix/#account-channel
+        * https://bitgetlimited.github.io/apidoc/en/spot/#account-channel
+        """
+        return self._get("account", Account)
 
     @property
     def orders(self) -> "Orders":
-        return self.get("orders", Orders)
+        """orders channel.
+
+        アクティブオーダーのみデータが格納されます。 キャンセル、約定済みなどは削除されます。
+
+        * https://bitgetlimited.github.io/apidoc/en/spot/#order-channel
+        * https://bitgetlimited.github.io/apidoc/en/mix/#order-channel
+        """
+        return self._get("orders", Orders)
 
     @property
     def positions(self) -> "Positions":
-        return self.get("positions", Positions)
+        """positions channel.
+
+        * https://bitgetlimited.github.io/apidoc/en/mix/#positions-channel
+        """
+        return self._get("positions", Positions)
 
 
 class Trade(DataStore):
@@ -107,9 +141,9 @@ class Trade(DataStore):
             [
                 {
                     "instId": instId,
-                    "ts": int(item[0]),
-                    "price": float(item[1]),
-                    "size": float(item[2]),
+                    "ts": item[0],
+                    "px": item[1],
+                    "sz": item[2],
                     "side": item[3],
                 }
                 for item in message.get("data", [])
@@ -118,36 +152,37 @@ class Trade(DataStore):
 
 
 class OrderBook(DataStore):
-    _KEYS = ["instId", "side", "price"]
+    _KEYS = ["instId", "side", "px"]
 
     def _init(self) -> None:
-        self.timestamp: Optional[int] = None
+        self.timestamp: int | None = None
 
-    def sorted(self, query: Item = None) -> dict[str, list[Item]]:
-        if query is None:
-            query = {}
-        result = {"SELL": [], "BUY": []}
-        for item in self:
-            if all(k in item and query[k] == item[k] for k in query):
-                result[item["side"]].append(item)
-        result["SELL"].sort(key=lambda x: x["price"])
-        result["BUY"].sort(key=lambda x: x["price"], reverse=True)
-        return result
+    def sorted(
+        self, query: Item | None = None, limit: int | None = None
+    ) -> dict[str, list[Item]]:
+        return self._sorted(
+            item_key="side",
+            item_asc_key="asks",
+            item_desc_key="bids",
+            sort_key="px",
+            query=query,
+            limit=limit,
+        )
 
     def _onmessage(self, message: Item) -> None:
         instId = message["arg"]["instId"]
         books = message["data"]
-        for key, side in (("bids", "BUY"), ("asks", "SELL")):
+        for side in ("asks", "bids"):
             for book in books:
-                for item in book[key]:
+                for item in book[side]:
                     if item[1] != "0":
                         self._insert(
                             [
                                 {
                                     "instId": instId,
                                     "side": side,
-                                    "price": float(item[0]),
-                                    "size": float(item[1]),
+                                    "px": item[0],
+                                    "sz": item[1],
                                 }
                             ]
                         )
@@ -157,8 +192,8 @@ class OrderBook(DataStore):
                                 {
                                     "instId": instId,
                                     "side": side,
-                                    "price": float(item[0]),
-                                    "size": float(item[1]),
+                                    "px": item[0],
+                                    "sz": item[1],
                                 }
                             ]
                         )
@@ -183,11 +218,11 @@ class CandleSticks(DataStore):
                     "instId": instId,
                     "interval": channel[-2:],
                     "ts": item[0],
-                    "o": float(item[1]),
-                    "h": float(item[2]),
-                    "l": float(item[3]),
-                    "c": float(item[4]),
-                    "baseVol": float(item[5]),
+                    "o": item[1],
+                    "h": item[2],
+                    "l": item[3],
+                    "c": item[4],
+                    "baseVol": item[5],
                 }
                 for item in message.get("data", [])
             ]

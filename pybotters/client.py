@@ -4,89 +4,40 @@ import copy
 import json
 import logging
 import os
-from typing import Any, Mapping, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Literal, Mapping
 
 import aiohttp
 from aiohttp import hdrs
 from aiohttp.client import _RequestContextManager
 
-from . import __version__
+from .__version__ import __version__
 from .auth import Auth
 from .request import ClientRequest
 from .typedefs import WsBytesHandler, WsJsonHandler, WsStrHandler
-from .ws import ClientWebSocketResponse, WebSocketRunner
+from .ws import ClientWebSocketResponse, WebSocketApp
 
 logger = logging.getLogger(__name__)
 
 
 class Client:
-    """
-    HTTPリクエストクライアントクラス
-
-    .. note::
-        引数 apis は省略できます。
-
-    :Example:
-
-    .. code-block:: python
-
-        async def main():
-            async with pybotters.Client(apis={'example': ['KEY', 'SECRET']}) as client:
-                r = await client.get('https://...', params={'foo': 'bar'})
-                print(await r.json())
-
-    .. code-block:: python
-
-        async def main():
-            async with pybotters.Client(apis={'example': ['KEY', 'SECRET']}) as client:
-                wstask = await client.ws_connect(
-                    'wss://...',
-                    send_json={'foo': 'bar'},
-                    hdlr_json=pybotters.print_handler
-                    )
-                await wstask
-                # Ctrl+C to break
-
-    Basic API
-
-    パッケージトップレベルで利用できるHTTPリクエスト関数です。 これらは同期関数です。 内部的にpybotters.Clientをラップしています。
-
-    :Example:
-
-    .. code-block:: python
-
-        r = pybotters.get(
-                'https://...',
-                params={'foo': 'bar'},
-                apis={'example': ['KEY', 'SECRET']}
-            )
-        print(r.text())
-        print(r.json())
-
-    .. code-block:: python
-
-        pybotters.ws_connect(
-                'wss://...',
-                send_json={'foo': 'bar'},
-                hdlr_json=pybotters.print_handler,
-                apis={'example': ['KEY', 'SECRET']}
-            )
-        # Ctrl+C to break
-    """
-
     _session: aiohttp.ClientSession
     _base_url: str
 
     def __init__(
         self,
-        apis: Optional[Union[dict[str, list[str]], str]] = None,
+        apis: dict[str, list[str]] | str | None = None,
         base_url: str = "",
         **kwargs: Any,
     ) -> None:
-        """
-        :param apis: APIキー・シークレットのデータ(optional) ex: {'exchange': ['key', 'secret']}
-        :param base_url: リクエストメソッドの url の前方に自動付加するURL(optional)
-        :param ``**kwargs``: aiohttp.Client.requestに渡されるキーワード引数(optional)
+        """HTTP / WebSocket API Client.
+
+        自動認証を備えた HTTP クライアントです。
+
+        Args:
+            apis: API 認証情報
+            base_url: ベース URL
+            **kwargs: aiohttp.ClientSession にバイパスされる引数
         """
         self._session = aiohttp.ClientSession(
             request_class=ClientRequest,
@@ -106,6 +57,7 @@ class Client:
         await self.close()
 
     async def close(self) -> None:
+        """Close client session."""
         await self._session.close()
 
     def _request(
@@ -113,9 +65,9 @@ class Client:
         method: str,
         url: str,
         *,
-        params: Optional[Mapping[str, Any]] = None,
-        data: Optional[dict[str, Any]] = None,
-        auth: Optional[Auth] = Auth,
+        params: Mapping[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        auth: Auth | None = Auth,
         **kwargs: Any,
     ) -> _RequestContextManager:
         return self._session.request(
@@ -132,28 +84,82 @@ class Client:
         method: str,
         url: str,
         *,
-        params: Optional[Mapping[str, str]] = None,
+        params: Mapping[str, str] | None = None,
         data: Any = None,
         **kwargs: Any,
     ) -> _RequestContextManager:
-        """
-        :param method: GET, POST, PUT, DELETE などのHTTPメソッド
-        :param url: リクエストURL
-        :param params: URLのクエリ文字列(optional)
-        :param data: リクエストボディ(optional)
-        :param headers: リクエストヘッダー(optional)
-        :param auth: API自動認証の機能の有効/無効。デフォルトで有効。auth=Noneを指定することで無効になります(optional)
-        :param ``kwargs``: aiohttp.Client.requestに渡されるキーワード引数(optional)
+        """HTTP request.
+
+        Args:
+            method: HTTP メソッド
+            url: リクエスト URL
+            params: リクエスト URL のクエリ文字列
+            data: リクエストの本文で送信するデータ
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            aiohttp.ClientResponse
+
+        Usage example: :ref:`http-method-api`
         """
         return self._request(method, url, params=params, data=data, **kwargs)
+
+    async def fetch(
+        self,
+        method: Literal["GET", "POST", "PUT", "DELETE"],
+        url: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        data: Any = None,
+        **kwargs: Any,
+    ) -> FetchResult:
+        """Fetch API.
+
+        Args:
+            method: HTTP メソッド
+            url: リクエスト URL
+            params: リクエスト URL のクエリ文字列
+            data: リクエストの本文で送信するデータ
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            FetchResult
+
+        Usage example: :ref:`fetch-api`
+        """
+        async with self.request(
+            method, url, params=params, data=data, **kwargs
+        ) as resp:
+            text = await resp.text()
+            try:
+                data = await resp.json(content_type=None)
+            except json.JSONDecodeError as e:
+                data = NotJSONContent(error=e)
+
+        return FetchResult(response=resp, text=text, data=data)
 
     def get(
         self,
         url: str,
         *,
-        params: Optional[Mapping[str, str]] = None,
+        params: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> _RequestContextManager:
+        """HTTP GET request.
+
+        Args:
+            url: リクエスト URL
+            params: リクエスト URL のクエリ文字列
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            aiohttp.ClientResponse
+
+        Usage example: :ref:`http-method-api`
+        """
         return self._request(hdrs.METH_GET, url, params=params, **kwargs)
 
     def post(
@@ -163,6 +169,19 @@ class Client:
         data: Any = None,
         **kwargs: Any,
     ) -> _RequestContextManager:
+        """HTTP POST request.
+
+        Args:
+            url: リクエスト URL
+            data: リクエストの本文で送信するデータ
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            aiohttp.ClientResponse
+
+        Usage example: :ref:`http-method-api`
+        """
         return self._request(hdrs.METH_POST, url, data=data, **kwargs)
 
     def put(
@@ -172,6 +191,20 @@ class Client:
         data: Any = None,
         **kwargs: Any,
     ) -> _RequestContextManager:
+        """HTTP PUT request.
+
+        Args:
+            url: リクエスト URL
+            params: リクエスト URL のクエリ文字列
+            data: リクエストの本文で送信するデータ
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            aiohttp.ClientResponse
+
+        Usage example: :ref:`http-method-api`
+        """
         return self._request(hdrs.METH_PUT, url, data=data, **kwargs)
 
     def delete(
@@ -181,53 +214,77 @@ class Client:
         data: Any = None,
         **kwargs: Any,
     ) -> _RequestContextManager:
+        """HTTP DELETE request.
+
+        Args:
+            url: リクエスト URL
+            params: リクエスト URL のクエリ文字列
+            data: リクエストの本文で送信するデータ
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.request にバイパスされる引数
+
+        Returns:
+            aiohttp.ClientResponse
+
+        Usage example: :ref:`http-method-api`
+        """
         return self._request(hdrs.METH_DELETE, url, data=data, **kwargs)
 
-    async def ws_connect(
+    def ws_connect(
         self,
         url: str,
         *,
-        send_str: Optional[Union[str, list[str]]] = None,
-        send_bytes: Optional[Union[bytes, list[bytes]]] = None,
-        send_json: Any = None,
-        hdlr_str: Optional[WsStrHandler] = None,
-        hdlr_bytes: Optional[WsBytesHandler] = None,
-        hdlr_json: Optional[WsJsonHandler] = None,
+        send_str: str | list[str] | None = None,
+        send_bytes: bytes | list[bytes] | None = None,
+        send_json: dict | list[dict] | None = None,
+        hdlr_str: WsStrHandler | list[WsStrHandler] | None = None,
+        hdlr_bytes: WsBytesHandler | list[WsBytesHandler] | None = None,
+        hdlr_json: WsJsonHandler | list[WsJsonHandler] | None = None,
+        backoff: tuple[float, float, float, float] = WebSocketApp._DEFAULT_BACKOFF,
+        autoping: bool = True,
         heartbeat: float = 10.0,
+        auth: Auth | None = Auth,
         **kwargs: Any,
-    ) -> WebSocketRunner:
+    ) -> WebSocketApp:
+        """WebSocket request.
+
+        Args:
+            url: リクエスト WebSocket URL
+            send_str: 送信する WebSocket メッセージ (文字列)
+            send_bytes: 送信する WebSocket メッセージ (バイト)
+            send_json: 送信する WebSocket メッセージ (JSON)
+            hdlr_str: WebSocket メッセージをハンドリングするコールバック (文字列)
+            hdlr_bytes: WebSocket メッセージをハンドリングするコールバック (バイト)
+            hdlr_json: WebSocket メッセージをハンドリングするコールバック (JSON)
+            backoff: 再接続の指数バックオフ (最小、最大、係数、初期値)
+            autoping: Ping に対する自動 Pong 応答 (デフォルト True)
+            heartbeat: WebSocket ハートビート (デフォルト 10.0 秒)
+            auth: 認証オプション (デフォルトで有効、None で無効)
+            **kwargs: aiohttp.ClientSession.ws_connect にバイパスされる引数
+
+        Returns:
+            WebSocketApp
+
+        Usage example: :ref:`websocket-api`
         """
-        :param url: WebSocket URL
-        :param send_str: WebSocketで送信する文字列。文字列、または文字列のリスト形式(optional)
-        :param send_json: WebSocketで送信する辞書オブジェクト。辞書、または辞書のリスト形式(optional)
-        :param hdlr_str: WebSocketの受信データをハンドリングする関数。
-            第1引数 msg に _str_型, 第2引数 ws にWebSocketClientResponse 型の変数が渡されます(optional)
-        :param hdlr_json: WebSocketの受信データをハンドリングする関数。
-            第1引数 msg に Any 型(JSON-like), 第2引数 ws に WebSocketClientResponse 型の変数が渡されます
-            (optional)
-        :param headers: リクエストヘッダー(optional)
-        :param auth: API自動認証の機能の有効/無効。デフォルトで有効。auth=Noneを指定することで無効になります(optional)
-        :param ``**kwargs``: aiohttp.ClientSession.ws_connectに渡されるキーワード引数(optional)
-        """
-        ws = WebSocketRunner(
-            url,
+        return WebSocketApp(
             self._session,
+            url,
             send_str=send_str,
             send_bytes=send_bytes,
             send_json=send_json,
             hdlr_str=hdlr_str,
             hdlr_bytes=hdlr_bytes,
             hdlr_json=hdlr_json,
+            backoff=backoff,
+            autoping=autoping,
             heartbeat=heartbeat,
+            auth=auth,
             **kwargs,
         )
-        await ws.wait()
-        return ws
 
     @staticmethod
-    def _load_apis(
-        apis: Optional[Union[dict[str, list[str]], str]]
-    ) -> dict[str, list[str]]:
+    def _load_apis(apis: dict[str, list[str]] | str | None) -> dict[str, list[str]]:
         if apis is None:
             current_apis = os.path.join(os.getcwd(), "apis.json")
             if os.path.isfile(current_apis):
@@ -254,14 +311,39 @@ class Client:
             return {}
 
     @staticmethod
-    def _encode_apis(
-        apis: Optional[dict[str, list[str]]]
-    ) -> dict[str, tuple[str | bytes, ...]]:
-        if apis is None:
-            apis = {}
+    def _encode_apis(apis: dict[str, list[str]]) -> dict[str, tuple[str | bytes, ...]]:
         encoded = {}
         for name in apis:
             if len(apis[name]) >= 2:
                 apis[name][1] = apis[name][1].encode()
             encoded[name] = tuple(apis[name])
         return encoded
+
+
+@dataclass
+class FetchResult:
+    """Fetch API result.
+
+    Attributes:
+        response: `aiohttp.ClientResponse`
+        text: テキストデータ
+        data: JSON データ (JSON ではない場合は :class:`.NotJSONContent`)
+    """
+
+    response: aiohttp.ClientResponse
+    text: str
+    data: Any | NotJSONContent
+
+
+@dataclass
+class NotJSONContent:
+    """Result of JSON decoding failure.
+
+    Attributes:
+        error: `JSONDecodeError`
+    """
+
+    error: json.JSONDecodeError
+
+    def __bool__(self) -> Literal[False]:
+        return False

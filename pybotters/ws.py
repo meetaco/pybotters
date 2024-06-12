@@ -7,19 +7,19 @@ import hashlib
 import hmac
 import inspect
 import logging
+import random
+import struct
 import time
 import uuid
 from dataclasses import dataclass
 from secrets import token_hex
-from typing import Any, Generator, Optional, Union
+from typing import Any, AsyncIterator, Generator
 
 import aiohttp
 from aiohttp.http_websocket import json
-from aiohttp.typedefs import StrOrURL
-
-import pybotters
 
 from .auth import Auth as _Auth
+from .typedefs import WsBytesHandler, WsJsonHandler, WsStrHandler
 
 logger = logging.getLogger(__name__)
 
@@ -32,156 +32,292 @@ def pretty_modulename(e: Exception) -> str:
     return modulename
 
 
-class WebSocketRunner:
+class WebSocketApp:
+    _BACKOFF_MIN = 1.92
+    _BACKOFF_MAX = 60.0
+    _BACKOFF_FACTOR = 1.618
+    _BACKOFF_INITIAL = 5.0
+    _DEFAULT_BACKOFF = (_BACKOFF_MIN, _BACKOFF_MAX, _BACKOFF_FACTOR, _BACKOFF_INITIAL)
+
     def __init__(
         self,
-        url: StrOrURL,
         session: aiohttp.ClientSession,
+        url: str,
         *,
-        send_str: Optional[Union[str, list[str]]] = None,
-        send_bytes: Optional[Union[bytes, list[bytes]]] = None,
-        send_json: Any = None,
-        hdlr_str=None,
-        hdlr_bytes=None,
-        hdlr_json=None,
-        auth=_Auth,
+        send_str: str | list[str] | None = None,
+        send_bytes: bytes | list[bytes] | None = None,
+        send_json: dict | list[dict] | None = None,
+        hdlr_str: WsStrHandler | list[WsStrHandler] | None = None,
+        hdlr_bytes: WsBytesHandler | list[WsBytesHandler] | None = None,
+        hdlr_json: WsJsonHandler | list[WsJsonHandler] | None = None,
+        backoff: tuple[float, float, float, float] = _DEFAULT_BACKOFF,
         **kwargs: Any,
     ) -> None:
-        self.connected = False
+        """WebSocket Application.
+
+        自動再接続、自動認証、自動 PING/PONG を備えた WebSocket アプリケーションです。
+
+        Usage example: :ref:`websocketqueue`
+        """
+        self._session = session
+        self._url = url
+
+        self._loop = session._loop
+        self._current_ws: aiohttp.ClientWebSocketResponse | None = None
         self._event = asyncio.Event()
-        self._task = asyncio.create_task(
+
+        self._autoping = kwargs.pop("autoping", True)
+        self._pings: dict[bytes, asyncio.Event] = {}
+
+        if send_str is None:
+            send_str = []
+        elif isinstance(send_str, str):
+            send_str = [send_str]
+
+        if send_bytes is None:
+            send_bytes = []
+        elif isinstance(send_bytes, bytes):
+            send_bytes = [send_bytes]
+
+        if send_json is None:
+            send_json = []
+        elif isinstance(send_json, dict):
+            send_json = [send_json]
+
+        if hdlr_str is None:
+            hdlr_str = []
+        elif callable(hdlr_str):
+            hdlr_str = [hdlr_str]
+
+        if hdlr_bytes is None:
+            hdlr_bytes = []
+        elif callable(hdlr_bytes):
+            hdlr_bytes = [hdlr_bytes]
+
+        if hdlr_json is None:
+            hdlr_json = []
+        elif callable(hdlr_json):
+            hdlr_json = [hdlr_json]
+
+        self._task = self._loop.create_task(
             self._run_forever(
-                url,
-                session,
                 send_str=send_str,
                 send_bytes=send_bytes,
                 send_json=send_json,
                 hdlr_str=hdlr_str,
                 hdlr_bytes=hdlr_bytes,
                 hdlr_json=hdlr_json,
-                auth=auth,
+                backoff=backoff,
                 **kwargs,
             )
         )
 
+    @property
+    def url(self) -> str:
+        """WebSocket URL.
+
+        WebSocket の接続 URL です。
+        接続中に値を変更した場合は、再接続時に設定 URL に接続されます。
+        """
+        return self._url
+
+    @url.setter
+    def url(self, url: str) -> None:
+        self._url = url
+
+    @property
+    def current_ws(self) -> ClientWebSocketResponse | None:
+        """Current WebSocket connection.
+
+        現在の WebSocket コネクションです。
+        現在のコネクションが存在する場合は ClientWebSocketResponse を返します。
+        コネクションが存在しない場合は None を返します。
+        """
+        return self._current_ws
+
     async def _run_forever(
         self,
-        url: StrOrURL,
-        session: aiohttp.ClientSession,
         *,
-        send_str: Optional[Union[str, list[str]]] = None,
-        send_bytes: Optional[Union[bytes, list[bytes]]] = None,
-        send_json: Any = None,
-        hdlr_str=None,
-        hdlr_bytes=None,
-        hdlr_json=None,
-        auth=_Auth,
+        send_str: list[str],
+        send_bytes: list[bytes],
+        send_json: list[dict],
+        hdlr_str: list[WsStrHandler],
+        hdlr_bytes: list[WsBytesHandler],
+        hdlr_json: list[WsJsonHandler],
+        backoff: tuple[float, float, float, float],
         **kwargs: Any,
     ) -> None:
-        if all([hdlr_str is None, hdlr_json is None]):
-            hdlr_json = pybotters.print_handler
-        iscorofunc_str = asyncio.iscoroutinefunction(hdlr_str)
-        iscorofunc_bytes = asyncio.iscoroutinefunction(hdlr_bytes)
-        iscorofunc_json = asyncio.iscoroutinefunction(hdlr_json)
-        while not session.closed:
-            cooldown = asyncio.create_task(asyncio.sleep(60.0))
+        BACKOFF_MIN, BACKOFF_MAX, BACKOFF_FACTOR, BACKOFF_INITIAL = backoff
+
+        backoff_delay = BACKOFF_MIN
+        while not self._session.closed:
             try:
-                async with session.ws_connect(url, auth=auth, **kwargs) as ws:
-                    self.connected = True
-                    self._event.set()
-                    if send_str is not None:
-                        if isinstance(send_str, list):
-                            await asyncio.gather(
-                                *[ws.send_str(item) for item in send_str]
-                            )
-                        else:
-                            await ws.send_str(send_str)
-                    if send_bytes is not None:
-                        if isinstance(send_bytes, list):
-                            await asyncio.gather(
-                                *[ws.send_bytes(item) for item in send_bytes]
-                            )
-                        else:
-                            await ws.send_bytes(send_bytes)
-                    if send_json is not None:
-                        if isinstance(send_json, list):
-                            await asyncio.gather(
-                                *[ws.send_json(item) for item in send_json]
-                            )
-                        else:
-                            await ws.send_json(send_json)
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            if hdlr_str is not None:
-                                try:
-                                    if iscorofunc_str:
-                                        await hdlr_str(msg.data, ws)
-                                    else:
-                                        hdlr_str(msg.data, ws)
-                                except Exception as e:
-                                    logger.exception(f"{pretty_modulename(e)}: {e}")
-                            if hdlr_json is not None:
-                                try:
-                                    data = msg.json()
-                                except json.decoder.JSONDecodeError:
-                                    pass
-                                else:
-                                    try:
-                                        if iscorofunc_json:
-                                            await hdlr_json(data, ws)
-                                        else:
-                                            hdlr_json(data, ws)
-                                    except Exception as e:
-                                        logger.exception(f"{pretty_modulename(e)}: {e}")
-                        elif msg.type == aiohttp.WSMsgType.BINARY:
-                            if hdlr_bytes is not None:
-                                try:
-                                    if iscorofunc_bytes:
-                                        await hdlr_bytes(msg.data, ws)
-                                    else:
-                                        hdlr_bytes(msg.data, ws)
-                                except Exception as e:
-                                    logger.exception(f"{pretty_modulename(e)}: {e}")
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            break
-            except (
-                aiohttp.WSServerHandshakeError,
-                aiohttp.ClientOSError,
-                ConnectionResetError,
-            ) as e:
+                await self._ws_connect(
+                    send_str=send_str,
+                    send_bytes=send_bytes,
+                    send_json=send_json,
+                    hdlr_str=hdlr_str,
+                    hdlr_bytes=hdlr_bytes,
+                    hdlr_json=hdlr_json,
+                    **kwargs,
+                )
+            # From https://github.com/python-websockets/websockets/blob/12.0/src/websockets/legacy/client.py#L600-L624
+            # Licensed under the BSD-3-Clause
+            except Exception as e:
                 logger.warning(f"{pretty_modulename(e)}: {e}")
-            self.connected = False
-            self._event.clear()
-            await cooldown
+                if backoff_delay == BACKOFF_MIN:
+                    initial_delay = random.random() * BACKOFF_INITIAL
+                    await asyncio.sleep(initial_delay)
+                else:
+                    await asyncio.sleep(int(backoff_delay))
+                backoff_delay = backoff_delay * BACKOFF_FACTOR
+                backoff_delay = min(backoff_delay, BACKOFF_MAX)
+            else:
+                backoff_delay = BACKOFF_MIN
+            # End https://github.com/python-websockets/websockets/blob/12.0/src/websockets/legacy/client.py#L600-L624
+            finally:
+                self._current_ws = None
+                self._event.clear()
+
+    async def _ws_connect(
+        self,
+        *,
+        send_str: list[str],
+        send_bytes: list[bytes],
+        send_json: list[dict],
+        hdlr_str: list[WsStrHandler],
+        hdlr_bytes: list[WsBytesHandler],
+        hdlr_json: list[WsJsonHandler],
+        **kwargs: Any,
+    ) -> None:
+        async with self._session.ws_connect(self._url, autoping=False, **kwargs) as ws:
+            self._current_ws = ws
+            self._event.set()
+
+            await ws._wait_authtask()
+
+            await self._ws_send(ws, send_str, send_bytes, send_json)
+
+            await self._ws_receive(ws, hdlr_str, hdlr_bytes, hdlr_json)
+
+    async def _ws_send(
+        self,
+        ws: ClientWebSocketResponse,
+        send_str: list[str],
+        send_bytes: list[bytes],
+        send_json: list[dict],
+    ) -> None:
+        await asyncio.gather(
+            *(ws.send_str(x) for x in send_str),
+            *(ws.send_bytes(x) for x in send_bytes),
+            *(ws.send_json(x) for x in send_json),
+        )
+
+    async def _ws_receive(
+        self,
+        ws: ClientWebSocketResponse,
+        hdlr_str: list[WsStrHandler],
+        hdlr_bytes: list[WsBytesHandler],
+        hdlr_json: list[WsJsonHandler],
+    ) -> None:
+        async for msg in ws:
+            self._loop.call_soon(
+                self._onmessage, msg, ws, hdlr_str, hdlr_bytes, hdlr_json
+            )
+
+    def _onmessage(
+        self,
+        msg: aiohttp.WSMessage,
+        ws: ClientWebSocketResponse,
+        hdlr_str: list[WsStrHandler],
+        hdlr_bytes: list[WsBytesHandler],
+        hdlr_json: list[WsJsonHandler],
+    ) -> None:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            for hdlr in hdlr_str:
+                self._loop.call_soon(hdlr, msg.data, ws)
+        elif msg.type == aiohttp.WSMsgType.BINARY:
+            for hdlr in hdlr_bytes:
+                self._loop.call_soon(hdlr, msg.data, ws)
+
+        if hdlr_json and msg.type in {aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY}:
+            try:
+                data = msg.json()
+            except json.JSONDecodeError as e:
+                if msg.data not in {"ping", "pong"}:
+                    logger.warning(f"{pretty_modulename(e)}: {e} {e.doc}")
+            else:
+                for hdlr in hdlr_json:
+                    self._loop.call_soon(hdlr, data, ws)
+
+        if msg.type == aiohttp.WSMsgType.PING and self._autoping:
+            self._loop.create_task(ws.pong(msg.data))
+        elif msg.type == aiohttp.WSMsgType.PONG:
+            data = bytes(msg.data)
+            if data in self._pings:
+                self._pings[data].set()
+
+    async def heartbeat(self, timeout: float = 10.0) -> None:
+        """Ensure WebSocket connection is open with Ping-Pong.
+
+        WebSocket の Ping-Pong で接続の疎通を確認します。
+        ユーザーコード内で WebSocket のデータを利用する前にこのコルーチンを待機することで、
+        WebSocket の接続性を保証するのに役に立ちます。
+
+        一定時間 Pong が返ってこない場合は再接続を試みます。
+        このメソッドは疎通が確認されるまで待機します。
+
+        Args:
+            timeout: WebSocket Ping-Pong ハートビート (デフォルト 10.0 秒)
+        """
+        while True:
+            await self._wait_handshake()
+
+            ping = struct.pack("!I", random.getrandbits(32))
+            self._pings[ping] = asyncio.Event()
+            if self._current_ws:
+                await self._current_ws.ping(ping)
+
+            try:
+                await asyncio.wait_for(self._pings[ping].wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                if self._current_ws:
+                    self._current_ws._pong_not_received()
+                    self._current_ws = None
+                    self._event.clear()
+            else:
+                return
+            finally:
+                del self._pings[ping]
 
     async def wait(self) -> None:
-        await self._event.wait()
+        """Wait WebSocketApp.
 
-    def __await__(self) -> Generator[Any, None, None]:
-        return self._task.__await__()
+        WebSocketApp の待機を待ちます。
+        ただし WebSocketApp は自動再接続の機構を備えるので、実質的に無限待機です。
+        プログラムの終了を防ぐのに役に立ちます。
+        """
+        await self._task
+
+    async def _wait_handshake(self) -> "WebSocketApp":
+        await self._event.wait()
+        return self
+
+    def __await__(self) -> Generator[Any, None, "WebSocketApp"]:
+        return self._wait_handshake().__await__()
 
 
 class WebSocketQueue(asyncio.Queue):
+    """WebSocket queue (from asyncio.Queue)."""
+
     def onmessage(self, msg: Any, ws: aiohttp.ClientWebSocketResponse):
-        self.put_nowait((msg, ws))
+        """WebSocket message hander callback."""
+        self.put_nowait(msg)
 
-    async def wait_for(
-        self, timeout: Optional[float] = None
-    ) -> tuple[Any, aiohttp.ClientWebSocketResponse]:
-        return await asyncio.wait_for(self.get(), timeout)
-
-    async def iter(
-        self, *, timeout: Optional[float] = None
-    ) -> Generator[tuple[Any, aiohttp.ClientWebSocketResponse], None, None]:
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        """Receive WebSocket message."""
         while True:
-            yield await self.wait_for(timeout)
-
-    async def iter_msg(
-        self, *, timeout: Optional[float] = None
-    ) -> Generator[Any, None, None]:
-        while True:
-            msg, ws = await self.wait_for(timeout)
-            yield msg
+            yield await self.get()
 
 
 class Heartbeat:
@@ -220,8 +356,8 @@ class Heartbeat:
     async def bitget(ws: aiohttp.ClientWebSocketResponse):
         while not ws.closed:
             await ws.send_str("ping")
-            # 公式サンプルが25秒ごとに送っていたので25秒に設定
-            # https://github.com/BitgetLimited/v3-bitget-api-sdk/blob/master/bitget-python-sdk-api/bitget/ws/bitget_ws_client.py
+            # Refer to official SDK
+            # https://github.com/BitgetLimited/v3-bitget-api-sdk/blob/09179123a62cf2a63ea1cfbb289b85e3a40018f8/bitget-python-sdk-api/bitget/ws/bitget_ws_client.py#L58
             await asyncio.sleep(25.0)
 
     @staticmethod
@@ -240,9 +376,7 @@ class Heartbeat:
 class Auth:
     @staticmethod
     async def bybit(ws: aiohttp.ClientWebSocketResponse):
-        if ("public" in ws._response.url.path) or (
-            ws._response.url.path.startswith("/spot/quote")  # for spot v1 only
-        ):
+        if "public" in ws._response.url.parts:
             return
 
         key: str = ws._response._session.__dict__["_apis"][
@@ -258,24 +392,12 @@ class Auth:
             secret, path.encode(), digestmod=hashlib.sha256
         ).hexdigest()
 
-        await ws.send_json(
-            {"op": "auth", "args": [key, expires, signature]},
-            _itself=True,
-        )
+        await ws.send_json({"op": "auth", "args": [key, expires, signature]})
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                data = msg.json()
-                if "success" in data:  # for almost all
-                    if data["success"]:
-                        break
-                    else:
-                        logger.warning(data)
-                else:  # for spot v1 only
-                    if "auth" in data:
-                        break
-                    elif "code" in data:
-                        logger.warning(data)
-            elif msg.type == aiohttp.WSMsgType.ERROR:
+            data = msg.json()
+            if data.get("op") == "auth":
+                if not data.get("success"):
+                    logger.warning(data)
                 break
 
     @staticmethod
@@ -302,18 +424,13 @@ class Auth:
                     "signature": sign,
                 },
                 "id": "auth",
-            },
-            _itself=True,
+            }
         )
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                data = msg.json()
+            data = msg.json()
+            if data.get("id") == "auth":
                 if "error" in data:
                     logger.warning(data)
-                if "id" in data:
-                    if data["id"] == "auth":
-                        break
-            elif msg.type == aiohttp.WSMsgType.ERROR:
                 break
 
     @staticmethod
@@ -334,23 +451,16 @@ class Auth:
             "params": ["API", key, signature, expiry],
             "id": 123,
         }
-        await ws.send_json(msg, _itself=True)
+        await ws.send_json(msg)
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                data = msg.json()
-                if "error" in data:
-                    if data["error"] is not None:
-                        logger.warning(data)
-                if data["result"] == {"status": "success"}:
-                    break
-            elif msg.type == aiohttp.WSMsgType.ERROR:
+            data = msg.json()
+            if data.get("id") == 123:
+                if data.get("error"):
+                    logger.warning(data)
                 break
 
     @staticmethod
     async def okx(ws: aiohttp.ClientWebSocketResponse):
-        if not ws._response.url.path.endswith("private"):
-            return
-
         key: str = ws._response._session.__dict__["_apis"][
             AuthHosts.items[ws._response.url.host].name
         ][0]
@@ -377,19 +487,19 @@ class Auth:
                 }
             ],
         }
-        await ws.send_json(msg, _itself=True)
+        await ws.send_json(msg)
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                try:
-                    data = msg.json()
-                    if data["event"] == "error":
-                        logger.warning(data)
-                    if data["event"] == "login":
-                        break
-                except json.JSONDecodeError:
-                    pass
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                break
+            try:
+                data = msg.json()
+            except json.JSONDecodeError:
+                pass
+            else:
+                event = data.get("event")
+                if event == "error":
+                    logger.warning(data)
+                    break
+                elif event == "login":
+                    break
 
     @staticmethod
     async def bitget(ws: aiohttp.ClientWebSocketResponse):
@@ -420,7 +530,19 @@ class Auth:
                 }
             ],
         }
-        await ws.send_json(msg, _itself=True)
+        await ws.send_json(msg)
+        async for msg in ws:
+            try:
+                data = msg.json()
+            except json.JSONDecodeError:
+                pass
+            else:
+                event = data.get("event")
+                if event == "error":
+                    logger.warning(data)
+                    break
+                elif event == "login":
+                    break
 
     @staticmethod
     async def mexc(ws: aiohttp.ClientWebSocketResponse):
@@ -444,12 +566,7 @@ class Auth:
                 "signature": sign,
             },
         }
-        await ws.send_json(msg, _itself=True)
-
-    @staticmethod
-    async def kucoin(ws: aiohttp.ClientWebSocketResponse):
-        # Endpointの取得時点で行われるのでここでは不要
-        pass
+        await ws.send_json(msg)
 
 
 @dataclass
@@ -473,13 +590,17 @@ class HeartbeatHosts:
         "testnet.binanceops.com": Heartbeat.binance,
         "testnetws.binanceops.com": Heartbeat.binance,
         "phemex.com": Heartbeat.phemex,
+        "api.phemex.com": Heartbeat.phemex,
+        "vapi.phemex.com": Heartbeat.phemex,
         "testnet.phemex.com": Heartbeat.phemex,
+        "testnet-api.phemex.com": Heartbeat.phemex,
         "ws.okx.com": Heartbeat.okx,
         "wsaws.okx.com": Heartbeat.okx,
         "wspap.okx.com": Heartbeat.okx,
         "ws.bitget.com": Heartbeat.bitget,
         "contract.mexc.com": Heartbeat.mexc,
-        "ws-api.kucoin.com": Heartbeat.kucoin,
+        "ws-api-spot.kucoin.com": Heartbeat.kucoin,
+        "ws-api-futures.kucoin.com": Heartbeat.kucoin,
     }
 
 
@@ -490,7 +611,10 @@ class AuthHosts:
         "stream-testnet.bybit.com": Item("bybit_testnet", Auth.bybit),
         "ws.lightstream.bitflyer.com": Item("bitflyer", Auth.bitflyer),
         "phemex.com": Item("phemex", Auth.phemex),
+        "ws.phemex.com": Item("phemex", Auth.phemex),
+        "vapi.phemex.com": Item("phemex", Auth.phemex),
         "testnet.phemex.com": Item("phemex_testnet", Auth.phemex),
+        "testnet-api.phemex.com": Item("phemex_testnet", Auth.phemex),
         "ws.okx.com": Item("okx", Auth.okx),
         "wsaws.okx.com": Item("okx", Auth.okx),
         "wspap.okx.com": Item("okx_demo", Auth.okx),
@@ -529,9 +653,18 @@ class ClientWebSocketResponse(aiohttp.ClientWebSocketResponse):
             await RequestLimitHosts.items[self._response.url.host](self, super_send_str)
 
     async def send_json(self, *args, **kwargs) -> None:
-        _itself = kwargs.pop("_itself", False)
-        if not _itself:
-            await self._wait_authtask()
+        if (
+            (kwargs.pop("auth", _Auth) is _Auth)
+            and (self._response.url.host in MessageSignHosts.items)
+            and (
+                MessageSignHosts.items[self._response.url.host].name
+                in self._response._session.__dict__["_apis"]
+            )
+        ):
+            data = kwargs.get("data", args[0] if len(args) > 0 else None)
+            if data:
+                MessageSignHosts.items[self._response.url.host].func(self, data)
+
         return await super().send_json(*args, **kwargs)
 
 
@@ -581,4 +714,44 @@ class RequestLimitHosts:
     items = {
         "api.coin.z.com": RequestLimit.gmocoin,
         "stream.binance.com": RequestLimit.binance,
+    }
+
+
+class MessageSign:
+    @staticmethod
+    def binance(ws: aiohttp.ClientWebSocketResponse, data: dict[str, Any]):
+        key: str = ws._response._session.__dict__["_apis"][
+            MessageSignHosts.items[ws._response.url.host].name
+        ][0]
+        secret: bytes = ws._response._session.__dict__["_apis"][
+            MessageSignHosts.items[ws._response.url.host].name
+        ][1]
+
+        if "params" not in data:
+            data["params"] = {}
+
+        params = data["params"]
+        params["apiKey"] = key
+        params["timestamp"] = int(time.time() * 1000)
+        payload = "&".join(
+            [f"{param}={value}" for param, value in sorted(params.items())]
+        )
+        signature = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+        params["signature"] = signature
+
+    @staticmethod
+    def bybit(ws: aiohttp.ClientWebSocketResponse, data: dict[str, Any]):
+        if "trade" not in ws._response.url.parts:
+            return
+
+        if "header" not in data:
+            data["header"] = {"X-BAPI-TIMESTAMP": str(int(time.time() * 1000))}
+
+
+class MessageSignHosts:
+    items = {
+        "ws-api.binance.com": Item("binance", MessageSign.binance),
+        "testnet.binance.vision": Item("binancespot_testnet", MessageSign.binance),
+        "stream.bybit.com": Item("bybit", MessageSign.bybit),
+        "stream-testnet.bybit.com": Item("bybit_testnet", MessageSign.bybit),
     }

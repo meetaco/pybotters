@@ -54,35 +54,35 @@ class Auth:
         key: str = session.__dict__["_apis"][Hosts.items[url.host].name][0]
         secret: bytes = session.__dict__["_apis"][Hosts.items[url.host].name][1]
 
-        expires = str(int(time.time() * 1000))
-        if method == METH_GET:
-            if url.scheme == "https":
-                query = MultiDict(url.query)
-                query.extend({"timestamp": expires})
-                query_string = "&".join(f"{k}={v}" for k, v in query.items())
-                signature = hmac.new(
-                    secret, query_string.encode(), hashlib.sha256
-                ).hexdigest()
-                query.extend({"signature": signature})
-                url = url.with_query(query)
-                args = (
-                    method,
-                    url,
-                )
-        else:
-            data.update({"timestamp": expires})
-            # patch (issue #190, #192)
-            if url.path != "/api/v3/userDataStream":
-                body = FormData(data)()
-            else:
-                body = FormData()()
-            signature = hmac.new(secret, body._value, hashlib.sha256).hexdigest()
-            # patch (issue #190, #192)
-            if url.path != "/api/v3/userDataStream":
-                body._value += f"&signature={signature}".encode()
-            body._size = len(body._value)
-            kwargs.update({"data": body})
+        # Do not sign WebSocket upgrade requests
+        if headers.get("Upgrade") == "websocket":
+            args = (method, url)
+            return args
+
         headers.update({"X-MBX-APIKEY": key})
+
+        # NOTE: Security Type `USER_STREAM` patch (Issue #192), Only edit header
+        if url.name in {"userDataStream", "listen-key", "listenKey"}:
+            args = (method, url)
+            return args
+
+        expires = str(int(time.time() * 1000))
+        query = MultiDict(url.query)
+        body = FormData(data)()
+
+        query.extend({"timestamp": expires})
+        url = url.with_query(query)
+        query = MultiDict(url.query)
+
+        query_string = url.raw_query_string.encode()
+        signature = hmac.new(
+            secret, query_string + body._value, hashlib.sha256
+        ).hexdigest()
+
+        query.extend({"signature": signature})
+        url = url.with_query(query)
+        args = (method, url)
+        kwargs.update({"data": body})
 
         return args
 
@@ -241,7 +241,7 @@ class Auth:
         headers: CIMultiDict = kwargs["headers"]
 
         session: aiohttp.ClientSession = kwargs["session"]
-        api_name = NameSelector.okx(headers)
+        api_name = DynamicNameSelector.okx(args, kwargs)
         key: str = session.__dict__["_apis"][api_name][0]
         secret: bytes = session.__dict__["_apis"][api_name][1]
         passphrase: str = session.__dict__["_apis"][api_name][2]
@@ -345,23 +345,16 @@ class Auth:
         query = MultiDict(url.query)
         body = FormData(data)()
 
-        if query:
-            query.extend({"timestamp": timestamp})
-            url = url.with_query(query)
-            query = MultiDict(url.query)
-        else:
-            body._value += f"&timestamp={timestamp}".encode()
+        query.extend({"timestamp": timestamp})
+        url = url.with_query(query)
+        query = MultiDict(url.query)
 
         query_string = url.raw_query_string.encode()
         signature = hmac.new(
             secret, query_string + body._value, hashlib.sha256
         ).hexdigest()
 
-        if query:
-            query.extend({"signature": signature})
-        else:
-            body._value += f"&signature={signature}".encode()
-            body._size += len(body._value)
+        query.extend({"signature": signature})
 
         url = url.with_query(query)
         args = (method, url)
@@ -383,16 +376,14 @@ class Auth:
         passphrase: str = session.__dict__["_apis"][Hosts.items[url.host].name][2]
 
         now = int(time.time() * 1000)
-        if method == "GET":
-            str_to_sign = str(now) + method + url.path_qs
-        else:
-            body = JsonPayload(data) if data else FormData(data)()
-            headers["Content-Type"] = "application/json"
-            kwargs.update({"data": body._value})
-            str_to_sign = str(now) + method + url.path + body._value.decode()
+        body = JsonPayload(data) if data else FormData(data)()
+        if body._value:
+            kwargs.update({"data": body})
+
+        str_to_sign = f"{now}{method}{url.path_qs}".encode() + body._value
 
         signature = base64.b64encode(
-            hmac.new(secret, str_to_sign.encode("utf-8"), hashlib.sha256).digest()
+            hmac.new(secret, str_to_sign, hashlib.sha256).digest()
         ).decode()
         passphrase = base64.b64encode(
             hmac.new(secret, passphrase.encode("utf-8"), hashlib.sha256).digest()
@@ -415,9 +406,11 @@ class Item:
     func: Any
 
 
-class NameSelector:
+class DynamicNameSelector:
     @staticmethod
-    def okx(headers: CIMultiDict) -> str:
+    def okx(args: tuple[str, URL], kwargs: dict[str, Any]) -> str:
+        headers: CIMultiDict = kwargs["headers"]
+
         if "x-simulated-trading" in headers:
             if headers["x-simulated-trading"] == "1":
                 return "okx_demo"
@@ -430,36 +423,30 @@ class Hosts:
         "api.bytick.com": Item("bybit", Auth.bybit),
         "api-testnet.bybit.com": Item("bybit_testnet", Auth.bybit),
         "api.binance.com": Item("binance", Auth.binance),
+        "api-gcp.binance.com": Item("binance", Auth.binance),
         "api1.binance.com": Item("binance", Auth.binance),
         "api2.binance.com": Item("binance", Auth.binance),
         "api3.binance.com": Item("binance", Auth.binance),
-        "stream.binance.com": Item("binance", Auth.binance),
+        "api4.binance.com": Item("binance", Auth.binance),
+        "testnet.binance.vision": Item("binancespot_testnet", Auth.binance),
         "fapi.binance.com": Item("binance", Auth.binance),
-        "fstream.binance.com": Item("binance", Auth.binance),
-        "fstream-auth.binance.com": Item("binance", Auth.binance),
         "dapi.binance.com": Item("binance", Auth.binance),
-        "dstream.binance.com": Item("binance", Auth.binance),
-        "vapi.binance.com": Item("binance", Auth.binance),
-        "vstream.binance.com": Item("binance", Auth.binance),
-        "testnet.binancefuture.com": Item("binance_testnet", Auth.binance),
-        "stream.binancefuture.com": Item("binance_testnet", Auth.binance),
-        "dstream.binancefuture.com": Item("binance_testnet", Auth.binance),
-        "testnet.binanceops.com": Item("binance_testnet", Auth.binance),
-        "testnetws.binanceops.com": Item("binance_testnet", Auth.binance),
+        "testnet.binancefuture.com": Item("binancefuture_testnet", Auth.binance),
         "api.bitflyer.com": Item("bitflyer", Auth.bitflyer),
         "api.coin.z.com": Item("gmocoin", Auth.gmocoin),
         "api.bitbank.cc": Item("bitbank", Auth.bitbank),
         "www.bitmex.com": Item("bitmex", Auth.bitmex),
         "testnet.bitmex.com": Item("bitmex_testnet", Auth.bitmex),
         "api.phemex.com": Item("phemex", Auth.phemex),
+        "vapi.phemex.com": Item("phemex", Auth.phemex),
         "testnet-api.phemex.com": Item("phemex_testnet", Auth.phemex),
         "coincheck.com": Item("coincheck", Auth.coincheck),
-        "www.okx.com": Item(NameSelector.okx, Auth.okx),
-        "aws.okx.com": Item(NameSelector.okx, Auth.okx),
+        "www.okx.com": Item(DynamicNameSelector.okx, Auth.okx),
+        "aws.okx.com": Item(DynamicNameSelector.okx, Auth.okx),
         "api.bitget.com": Item("bitget", Auth.bitget),
         "www.mexc.com": Item("mexc", Auth.mexc_v2),
         "contract.mexc.com": Item("mexc", Auth.mexc_v2),
         "api.mexc.com": Item("mexc", Auth.mexc_v3),
-        "api.kucoin.com": Item("kucoinspot", Auth.kucoin),
-        "api-futures.kucoin.com": Item("kucoinfuture", Auth.kucoin),
+        "api.kucoin.com": Item("kucoin", Auth.kucoin),
+        "api-futures.kucoin.com": Item("kucoin", Auth.kucoin),
     }

@@ -11,7 +11,7 @@ from yarl import URL
 import pybotters.auth
 
 
-def util_api_generater():
+def util_api_generater():  # pragma: no cover
     """
     $ python
     >>> from tests.test_auth import util_api_generater
@@ -45,7 +45,11 @@ def mock_session(mocker: pytest_mock.MockerFixture):
             "9qm1u2s4GoHt9ryIm1D2fHV8",
             b"7pDOQJ49zyyDjrNGAvB31RcnAada8nkxkl2IWKop6b0E3tXh",
         ),
-        "binance_testnet": (
+        "binancespot_testnet": (
+            "LyM2qCkPqVaMxWIcRIe08V4s",
+            b"34BkmXEjeq5qRIbvKjhODva3XsL2MWd1pAWSq6ZkHDxnaQjh",
+        ),
+        "binancefuture_testnet": (
             "EDYH5JVoHJlhroiQkDntBHn8",
             b"lMFc3hibQUEOzSeG6YEvx7lMRgNBUlF07PVEm9g9U6HEWtEZ",
         ),
@@ -95,19 +99,14 @@ def mock_session(mocker: pytest_mock.MockerFixture):
             "0uVJRVNmR2ZHiCXtf6yEwrwy",
             b"39aw3fMqFhHsuhbkQ0wa8JzuUgodvbTVl9tZblpSKFnB9Qh3",
         ),
-        "kucoinspot": (
-            "CYdTygFbGgM1re2J54lU2t83",
-            b"r9ugGEq5pJkrBuqs6GYFgHFIgsPr4iAw06awzFByoZPRjTJs",
-            "MyPassphrase123",
-        ),
-        "kucoinfuture": (
+        "kucoin": (
             "CYdTygFbGgM1re2J54lU2t83",
             b"r9ugGEq5pJkrBuqs6GYFgHFIgsPr4iAw06awzFByoZPRjTJs",
             "MyPassphrase123",
         ),
     }
     assert set(apis.keys()) == set(
-        item.name if isinstance(item.name, str) else item.name({})
+        item.name if isinstance(item.name, str) else item.name.__name__
         for item in pybotters.auth.Hosts.items.values()
     )
     m_sess.__dict__["_apis"] = apis
@@ -126,8 +125,7 @@ def test_hosts():
 def test_item():
     name = "example"
 
-    def func(*args, **kwargs):
-        return args
+    def func(*args, **kwargs): ...
 
     item = pybotters.auth.Item(name, func)
     assert item.name == name
@@ -135,9 +133,20 @@ def test_item():
 
 
 def test_selector_okx():
-    assert pybotters.auth.NameSelector.okx({}) == "okx"
-    assert pybotters.auth.NameSelector.okx({"foo": "bar"}) == "okx"
-    assert pybotters.auth.NameSelector.okx({"x-simulated-trading": "1"}) == "okx_demo"
+    api_name = pybotters.auth.DynamicNameSelector.okx(
+        args=tuple(), kwargs={"headers": {}}
+    )
+    assert api_name == "okx"
+
+    api_name = pybotters.auth.DynamicNameSelector.okx(
+        args=tuple(), kwargs={"headers": {"foo": "bar"}}
+    )
+    assert api_name == "okx"
+
+    api_name = pybotters.auth.DynamicNameSelector.okx(
+        args=tuple(), kwargs={"headers": {"x-simulated-trading": "1"}}
+    )
+    assert api_name == "okx_demo"
 
 
 def test_bybit_get(mock_session, mocker: pytest_mock.MockerFixture):
@@ -232,33 +241,42 @@ def test_binance_post(mock_session, mocker: pytest_mock.MockerFixture):
     mocker.patch("time.time", return_value=2085848896.0)
     args = (
         "POST",
-        URL("https://dapi.binance.com/dapi/v1/order"),
+        URL("https://testnet.binance.vision/api/v3/order/test").with_query(
+            {
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+            }
+        ),
     )
     kwargs = {
         "data": {
-            "symbol": "BTCUSD_PERP",
-            "side": "BUY",
             "type": "MARKET",
-            "quantity": 1,
+            "quantity": "0.001",
         },
         "headers": CIMultiDict(),
         "session": mock_session,
     }
-    expected_args = ("POST", URL("https://dapi.binance.com/dapi/v1/order"))
+    expected_args = (
+        "POST",
+        URL("https://testnet.binance.vision/api/v3/order/test").with_query(
+            {
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+                "timestamp": "2085848896000",
+                "signature": (
+                    "4a538ce375d23684c909cfe01a2f63488080ef05d247156057067ee3c45358bc"
+                ),
+            }
+        ),
+    )
     expected_kwargs = {
         "data": aiohttp.formdata.FormData(
             {
-                "symbol": "BTCUSD_PERP",
-                "side": "BUY",
                 "type": "MARKET",
-                "quantity": 1,
-                "timestamp": "2085848896000",
-                "signature": (
-                    "ab855d04b87a8043830ca5dfabcded89012c69ed2ddeaaa1fc1dad54a82d1675"
-                ),
+                "quantity": "0.001",
             }
         )(),
-        "headers": CIMultiDict({"X-MBX-APIKEY": "9qm1u2s4GoHt9ryIm1D2fHV8"}),
+        "headers": CIMultiDict({"X-MBX-APIKEY": "LyM2qCkPqVaMxWIcRIe08V4s"}),
         "session": mock_session,
     }
     args = pybotters.auth.Auth.binance(args, kwargs)
@@ -267,14 +285,11 @@ def test_binance_post(mock_session, mocker: pytest_mock.MockerFixture):
     assert kwargs["headers"] == expected_kwargs["headers"]
 
 
-def test_binance_ws(mock_session, mocker: pytest_mock.MockerFixture):
+def test_binance_post_listenkey(mock_session, mocker: pytest_mock.MockerFixture):
     mocker.patch("time.time", return_value=2085848896.0)
     args = (
-        "GET",
-        URL(
-            "wss://dstream.binance.com/ws/pqia91ma19a5s61cv6a81va65sdf19v8a65a1a5s61cv6"
-            "a81va65sdf19v8a65a1"
-        ),
+        "POST",
+        URL("https://testnet.binance.vision/api/v3/userDataStream"),
     )
     kwargs = {
         "data": None,
@@ -282,15 +297,44 @@ def test_binance_ws(mock_session, mocker: pytest_mock.MockerFixture):
         "session": mock_session,
     }
     expected_args = (
+        "POST",
+        URL("https://testnet.binance.vision/api/v3/userDataStream"),
+    )
+    expected_kwargs = {
+        "data": None,
+        "headers": CIMultiDict({"X-MBX-APIKEY": "LyM2qCkPqVaMxWIcRIe08V4s"}),
+        "session": mock_session,
+    }
+    args = pybotters.auth.Auth.binance(args, kwargs)
+    assert args == expected_args
+    assert kwargs["data"] == expected_kwargs["data"]
+    assert kwargs["headers"] == expected_kwargs["headers"]
+
+
+def test_binance_ws_nosign(mock_session, mocker: pytest_mock.MockerFixture):
+    mocker.patch("time.time", return_value=2085848896.0)
+    args = (
         "GET",
         URL(
-            "wss://dstream.binance.com/ws/pqia91ma19a5s61cv6a81va65sdf19v8a65a1a5s61cv6"
-            "a81va65sdf19v8a65a1"
+            "wss://testnet.binance.vision/ws/pqia91ma19a5s61cv6a81va65sdf19v8a65a1a5s61"
+            "cv6a81va65sdf19v8a65a1"
+        ),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict({"Upgrade": "websocket"}),
+        "session": mock_session,
+    }
+    expected_args = (
+        "GET",
+        URL(
+            "wss://testnet.binance.vision/ws/pqia91ma19a5s61cv6a81va65sdf19v8a65a1a5s61"
+            "cv6a81va65sdf19v8a65a1"
         ),
     )
     expected_kwargs = {
         "data": None,
-        "headers": CIMultiDict({"X-MBX-APIKEY": "9qm1u2s4GoHt9ryIm1D2fHV8"}),
+        "headers": CIMultiDict({"Upgrade": "websocket"}),
         "session": mock_session,
     }
     args = pybotters.auth.Auth.binance(args, kwargs)
@@ -1096,6 +1140,40 @@ def test_mexc_v2_post(mock_session, mocker: pytest_mock.MockerFixture):
 
 def test_mexc_v3_get(mock_session, mocker: pytest_mock.MockerFixture):
     mocker.patch("time.time", return_value=2085848896.0)
+
+    # without query
+    args = (
+        "GET",
+        URL("https://api.mexc.com/api/v3/account"),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+    expected_args = (
+        "GET",
+        URL(
+            "https://api.mexc.com/api/v3/account?timestamp=2085848896000&signature=bea4"
+            "958a74f3d56f984e7fafd012cb2474813ff98d857b9e75d5eb46e4bcc5bc"
+        ),
+    )
+    expected_kwargs = {
+        "data": b"",
+        "headers": CIMultiDict(
+            {
+                "X-MEXC-APIKEY": "0uVJRVNmR2ZHiCXtf6yEwrwy",
+                "Content-Type": "application/json",
+            }
+        ),
+        "session": mock_session,
+    }
+    args = pybotters.auth.Auth.mexc_v3(args, kwargs)
+    assert args == expected_args
+    assert kwargs["data"] == expected_kwargs["data"]
+    assert kwargs["headers"] == expected_kwargs["headers"]
+
+    # with query
     args = (
         "GET",
         URL("https://api.mexc.com/api/v3/openOrders").with_query(
@@ -1149,7 +1227,13 @@ def test_mexc_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
         "headers": CIMultiDict(),
         "session": mock_session,
     }
-    expected_args = ("POST", URL("https://api.mexc.com/api/v3/order"))
+    expected_args = (
+        "POST",
+        URL(
+            "https://api.mexc.com/api/v3/order?timestamp=2085848896000&signature=692fc1"
+            "41d6a0bb9abc90714e253369b715b74c115358d9cbf6f450bdde688fdd"
+        ),
+    )
     expected_kwargs = {
         "data": aiohttp.formdata.FormData(
             {
@@ -1157,10 +1241,6 @@ def test_mexc_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
                 "side": "BUY",
                 "type": "MARKET",
                 "quoteOrderQty": "5",
-                "timestamp": "2085848896000",
-                "signature": (
-                    "4b5e31a683df50d43d4e0774fafb869e1b4d517f8fdbff23c275092517c84161"
-                ),
             }
         )()._value,
         "headers": CIMultiDict(
@@ -1229,10 +1309,9 @@ def test_kucoin_post(mock_session, mocker: pytest_mock.MockerFixture):
                 "price": "19200",
                 "size": 1,
             }
-        )._value,
+        ),
         "headers": CIMultiDict(
             {
-                "Content-Type": "application/json",
                 "KC-API-SIGN": "aoxLuRURO0t1z9hhh9ERbHjVp6bJ1K5bfoU2xHH25Y4=",
                 "KC-API-TIMESTAMP": "2085848896000",
                 "KC-API-KEY": "CYdTygFbGgM1re2J54lU2t83",
@@ -1244,5 +1323,5 @@ def test_kucoin_post(mock_session, mocker: pytest_mock.MockerFixture):
     }
     args = pybotters.auth.Auth.kucoin(args, kwargs)
     assert args == expected_args
-    assert kwargs["data"] == expected_kwargs["data"]
+    assert kwargs["data"]._value == expected_kwargs["data"]._value
     assert kwargs["headers"] == expected_kwargs["headers"]

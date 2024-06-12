@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import time
-from typing import Any, Awaitable, Optional
+import uuid
+from typing import Any, Awaitable
 
 import aiohttp
-import asyncio
-import uuid
 
-from ..store import DataStore, DataStoreManager, Item
+from ..store import DataStore, DataStoreCollection, Item
 from ..ws import ClientWebSocketResponse
 
 logger = logging.getLogger(__name__)
@@ -19,44 +19,40 @@ def _symbol_from_msg(msg):
     return msg["topic"].split(":")[-1]
 
 
-class KuCoinDataStore(DataStoreManager):
-    """
-    Kucoinのデータストアマネージャー
-    """
-
-    def __init__(self, *args, **kwargs):
-        super(KuCoinDataStore, self).__init__(*args, **kwargs)
-        self._endpoint = None
+class KuCoinDataStore(DataStoreCollection):
+    """KuCoin の DataStoreCollection クラス"""
 
     def _init(self) -> None:
-        self.create("ticker", datastore_class=Ticker)
-        self.create("kline", datastore_class=Kline)
-        self.create("symbolsnapshot", datastore_class=SymbolSnapshot)
-        self.create("orderbook5", datastore_class=TopKOrderBook)
-        self.create("orderbook50", datastore_class=TopKOrderBook)
-        self.create("execution", datastore_class=Execution)
-        self.create("indexprice", datastore_class=IndexPrice)
-        self.create("markprice", datastore_class=MarkPrice)
-        self.create("orderevents", datastore_class=OrderEvents)
-        self.create("orders", datastore_class=Orders)
-        self.create("balance", datastore_class=Balance)
-        self.create("marginfundingbook", datastore_class=MarginFundingBook)
-        self.create("marginpositions", datastore_class=MarginPositions)
-        self.create("marginpositionevents", datastore_class=MarginPositionEvents)
-        self.create("marginorderevents", datastore_class=MarginOrderEvents)
-        self.create("marginorders", datastore_class=MarginOrders)
-        self.create("instrument", datastore_class=Instrument)
-        self.create("announcements", datastore_class=Announcements)
-        self.create("transactionstats", datastore_class=TransactionStats)
-        self.create("balanceevents", datastore_class=BalanceEvents)
-        self.create("positions", datastore_class=Positions)
+        self._create("ticker", datastore_class=Ticker)
+        self._create("kline", datastore_class=Kline)
+        self._create("symbolsnapshot", datastore_class=SymbolSnapshot)
+        self._create("orderbook5", datastore_class=TopKOrderBook)
+        self._create("orderbook50", datastore_class=TopKOrderBook)
+        self._create("execution", datastore_class=Execution)
+        self._create("indexprice", datastore_class=IndexPrice)
+        self._create("markprice", datastore_class=MarkPrice)
+        self._create("orderevents", datastore_class=OrderEvents)
+        self._create("orders", datastore_class=Orders)
+        self._create("balance", datastore_class=Balance)
+        self._create("marginfundingbook", datastore_class=MarginFundingBook)
+        self._create("marginpositions", datastore_class=MarginPositions)
+        self._create("marginpositionevents", datastore_class=MarginPositionEvents)
+        self._create("marginorderevents", datastore_class=MarginOrderEvents)
+        self._create("marginorders", datastore_class=MarginOrders)
+        self._create("instrument", datastore_class=Instrument)
+        self._create("announcements", datastore_class=Announcements)
+        self._create("transactionstats", datastore_class=TransactionStats)
+        self._create("balanceevents", datastore_class=BalanceEvents)
+        self._create("positions", datastore_class=Positions)
+        self._endpoint = None
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
-        """
+        """Initialize DataStore from HTTP response data.
+
         対応エンドポイント
 
-        - GET /api/v1/market/candles (DataStore: Kline)
-        - GET /api/v1/positions (DataStore: Positions)
+        - GET /api/v1/market/candles (:attr:`.KuCoinDataStore.kline`)
+        - GET /api/v1/positions (:attr:`.KuCoinDataStore.positions`)
         """
         for f in asyncio.as_completed(aws):
             resp = await f
@@ -151,90 +147,191 @@ class KuCoinDataStore(DataStoreManager):
 
     @property
     def ticker(self) -> "Ticker":
-        return self.get("ticker", Ticker)
+        """/market/ticker, /contractMarket/tickerV2, /contractMarket/ticker topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/ticker
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/get-ticker-v2
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/get-ticker
+        """
+        return self._get("ticker", Ticker)
 
     @property
     def kline(self) -> "Kline":
-        return self.get("kline", Kline)
+        """/market/candles topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/klines
+        """
+        return self._get("kline", Kline)
 
     @property
     def symbolsnapshot(self) -> "SymbolSnapshot":
-        return self.get("symbolsnapshot", SymbolSnapshot)
+        """/market/snapshot topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/symbol-snapshot
+        """
+        return self._get("symbolsnapshot", SymbolSnapshot)
 
     @property
     def orderbook5(self) -> "TopKOrderBook":
-        return self.get("orderbook5", TopKOrderBook)
+        """/spotMarket/level2Depth50, /contractMarket/level2Depth5 topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/level2-5-best-ask-bid-orders
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/level2-5-best-ask-bid-orders
+        """
+        return self._get("orderbook5", TopKOrderBook)
 
     @property
     def orderbook50(self) -> "TopKOrderBook":
-        return self.get("orderbook50", TopKOrderBook)
+        """/spotMarket/level2Depth50, /contractMarket/level2Depth50 topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/level2-50-best-ask-bid-orders
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/level2-50-best-ask-bid-orders
+        """
+        return self._get("orderbook50", TopKOrderBook)
 
     @property
     def execution(self) -> "Execution":
-        return self.get("execution", Execution)
+        """/market/match, /contractMarket/execution topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/public-channels/match-execution-data
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/match-execution-data
+        """
+        return self._get("execution", Execution)
 
     @property
     def indexprice(self) -> "IndexPrice":
-        return self.get("indexprice", IndexPrice)
+        """/indicator/index topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/public-channels/index-price
+        """
+        return self._get("indexprice", IndexPrice)
 
     @property
     def markprice(self) -> "MarkPrice":
-        return self.get("markprice", MarkPrice)
+        """/indicator/markPrice topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/public-channels/mark-price
+        """
+        return self._get("markprice", MarkPrice)
 
     @property
     def orderevents(self) -> "OrderEvents":
-        return self.get("orderevents", OrderEvents)
+        """/spotMarket/tradeOrders, /spotMarket/advancedOrders, /contractMarket/tradeOrders, /contractMarket/advancedOrders topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/private-channels/private-order-change
+        * https://www.kucoin.com/docs/websocket/spot-trading/private-channels/stop-order-event
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/trade-orders
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/stop-order-lifecycle-event
+        """
+        return self._get("orderevents", OrderEvents)
 
     @property
     def orders(self) -> "Orders":
-        return self.get("orders", Orders)
+        """tradeOrders/advancedOrders topic.
+
+        アクティブオーダーのみデータが格納されます。 キャンセル、約定済みなどは削除されます。
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/private-channels/private-order-change
+        * https://www.kucoin.com/docs/websocket/spot-trading/private-channels/stop-order-event
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/trade-orders
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/stop-order-lifecycle-event
+        """
+        return self._get("orders", Orders)
 
     @property
     def balance(self) -> "Balance":
-        return self.get("balance", Balance)
+        """/account/balance topic.
+
+        * https://www.kucoin.com/docs/websocket/spot-trading/private-channels/account-balance-change
+        """
+        return self._get("balance", Balance)
 
     @property
     def marginfundingbook(self) -> "MarginFundingBook":
-        return self.get("marginfundingbook", MarginFundingBook)
+        """/margin/fundingBook topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/public-channels/margin-funding-order-book-change
+        """
+        return self._get("marginfundingbook", MarginFundingBook)
 
     @property
     def marginpositions(self) -> "MarginPositions":
-        return self.get("marginpositions", MarginPositions)
+        """/margin/position topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/private-channels/cross-margin-position-event
+        """
+        return self._get("marginpositions", MarginPositions)
 
     @property
     def marginpositionevents(self) -> "MarginPositionEvents":
-        return self.get("marginpositionevents", MarginPositionEvents)
+        """/margin/position topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/private-channels/cross-margin-position-event
+        """
+        return self._get("marginpositionevents", MarginPositionEvents)
 
     @property
     def marginorderevents(self) -> "MarginOrderEvents":
-        return self.get("marginorderevents", MarginOrderEvents)
+        """/margin/loan topic.
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/private-channels/margin-trade-order-event
+        """
+        return self._get("marginorderevents", MarginOrderEvents)
 
     @property
     def marginorders(self) -> "MarginOrders":
-        return self.get("marginorders", MarginOrders)
+        """/margin/loan topic.
+
+        アクティブオーダーのみデータが格納されます。 キャンセル、約定済みなどは削除されます。
+
+        * https://www.kucoin.com/docs/websocket/margin-trading/private-channels/margin-trade-order-event
+        """
+        return self._get("marginorders", MarginOrders)
 
     @property
     def instrument(self) -> "Instrument":
-        return self.get("instrument", Instrument)
+        """/contract/instrument topic.
+
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/contract-market-data
+        """
+        return self._get("instrument", Instrument)
 
     @property
     def announcements(self) -> "Announcements":
-        return self.get("announcements", Announcements)
+        """/contract/announcement topic.
+
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/funding-fee-settlement
+        """
+        return self._get("announcements", Announcements)
 
     @property
     def transactionstats(self) -> "TransactionStats":
-        return self.get("transactionstats", TransactionStats)
+        """/contractMarket/snapshot topic.
+
+        * https://www.kucoin.com/docs/websocket/futures-trading/public-channels/transaction-statistics-timer-event
+        """
+        return self._get("transactionstats", TransactionStats)
 
     @property
     def balanceevents(self) -> "BalanceEvents":
-        return self.get("balanceevents", BalanceEvents)
+        """/contractAccount/wallet topic.
+
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/account-balance-events
+        """
+        return self._get("balanceevents", BalanceEvents)
 
     @property
     def positions(self) -> "Positions":
-        return self.get("positions", Positions)
+        """/contract/position topic.
+
+        * https://www.kucoin.com/docs/websocket/futures-trading/private-channels/position-change-events
+        """
+        return self._get("positions", Positions)
 
     @property
     def endpoint(self):
+        """Retrieved KuCoin WebSocket endpoint."""
+
         if self._endpoint is None:
             raise RuntimeError("A websocket endpoint has not been initialized.")
         return self._endpoint
@@ -334,44 +431,40 @@ class TopKOrderBook(DataStore):
     - https://docs.kucoin.com/#level2-50-best-ask-bid-orders
 
     # Future
-    - https://docs.kucoin.com/futures/message-channel-for-the-5-best-ask-bid-full-data-of-level-2  # noqa: E501
-    - https://docs.kucoin.com/futures/message-channel-for-the-50-best-ask-bid-full-data-of-level-2 # noqa: E501
+    - https://docs.kucoin.com/futures/message-channel-for-the-5-best-ask-bid-full-data-of-level-2
+    - https://docs.kucoin.com/futures/message-channel-for-the-50-best-ask-bid-full-data-of-level-2
     """
 
-    _KEYS = ["symbol", "k", "side"]
+    _KEYS = ["symbol", "side", "price"]
 
     def __init__(self, *args, **kwargs):
         super(TopKOrderBook, self).__init__(*args, **kwargs)
 
-    def sorted(self, query: Optional[Item] = None) -> dict[str, list[float]]:
-        if query is None:
-            query = {}
-
-        items = self.find(query)
-
-        sides = ["ask", "bid"]
-        result = {k: [] for k in sides}
-        for s in sides:
-            result[s] = sorted(
-                filter(lambda x: x["side"] == s, items), key=lambda x: x["k"]
-            )
-        return result
+    def sorted(
+        self, query: Item | None = None, limit: int | None = None
+    ) -> dict[str, list[Item]]:
+        return self._sorted(
+            item_key="side",
+            item_asc_key="asks",
+            item_desc_key="bids",
+            sort_key="price",
+            query=query,
+            limit=limit,
+        )
 
     def _onmessage(self, msg: dict[str, Any]) -> None:
         symbol = _symbol_from_msg(msg)
 
-        self._delete([])
+        self._find_and_delete({"symbol": symbol})
         data = []
         for side in ("asks", "bids"):
-            items = msg["data"][side]
-            for k, i in enumerate(items, start=1):
+            for item in msg["data"][side]:
                 data.append(
                     {
                         "symbol": symbol,
-                        "k": k,
-                        "side": side[:-1],
-                        "price": float(i[0]),
-                        "size": float(i[1]),
+                        "side": side,
+                        "price": item[0],
+                        "size": item[1],
                         "timestamp": msg["data"]["timestamp"],
                     }
                 )
@@ -427,19 +520,19 @@ class Kline(DataStore):
         return {
             "symbol": symbol,
             "interval": interval,
-            "received_at": int(data["time"]),
+            "received_at": data["time"],
             **ohlcva,
         }
 
     def _to_ohlcva(self, candles):
         return {
-            "timestamp": int(candles[0]),
-            "open": float(candles[1]),
-            "close": float(candles[2]),
-            "high": float(candles[3]),
-            "low": float(candles[4]),
-            "volume": float(candles[5]),
-            "amount": float(candles[6]),
+            "timestamp": candles[0],
+            "open": candles[1],
+            "close": candles[2],
+            "high": candles[3],
+            "low": candles[4],
+            "volume": candles[5],
+            "amount": candles[6],
         }
 
 

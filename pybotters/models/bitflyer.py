@@ -10,27 +10,38 @@ from typing import Awaitable
 
 import aiohttp
 
-from ..store import DataStore, DataStoreManager
+from ..store import DataStore, DataStoreCollection
 from ..typedefs import Item
 from ..ws import ClientWebSocketResponse
 
 logger = logging.getLogger(__name__)
 
 
-class bitFlyerDataStore(DataStoreManager):
+class bitFlyerDataStore(DataStoreCollection):
+    """bitFlyer の DataStoreCollection クラス"""
+
     def _init(self) -> None:
-        self.create("board", datastore_class=Board)
-        self.create("ticker", datastore_class=Ticker)
-        self.create("executions", datastore_class=Executions)
-        self.create("childorderevents", datastore_class=ChildOrderEvents)
-        self.create("childorders", datastore_class=ChildOrders)
-        self.create("parentorderevents", datastore_class=ParentOrderEvents)
-        self.create("parentorders", datastore_class=ParentOrders)
-        self.create("positions", datastore_class=Positions)
-        self.create("balance", datastore_class=Balance)
+        self._create("board", datastore_class=Board)
+        self._create("ticker", datastore_class=Ticker)
+        self._create("executions", datastore_class=Executions)
+        self._create("childorderevents", datastore_class=ChildOrderEvents)
+        self._create("childorders", datastore_class=ChildOrders)
+        self._create("parentorderevents", datastore_class=ParentOrderEvents)
+        self._create("parentorders", datastore_class=ParentOrders)
+        self._create("positions", datastore_class=Positions)
+        self._create("balance", datastore_class=Balance)
         self._snapshots = set()
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
+        """Initialize DataStore from HTTP response data.
+
+        対応エンドポイント
+
+        - GET /v1/me/getchildorders (:attr:`.bitFlyerDataStore.childorders`)
+        - GET /v1/me/getparentorders (:attr:`.bitFlyerDataStore.parentorders`)
+        - GET /v1/me/getpositions (:attr:`.bitFlyerDataStore.positions`)
+        - GET /v1/me/getbalance (:attr:`.bitFlyerDataStore.balance`)
+        """
         for f in asyncio.as_completed(aws):
             resp = await f
             data = await resp.json()
@@ -82,39 +93,76 @@ class bitFlyerDataStore(DataStoreManager):
 
     @property
     def board(self) -> "Board":
-        return self.get("board", Board)
+        """lightning_board/lightning_board_snapshot channel.
+
+        * https://bf-lightning-api.readme.io/docs/realtime-board-snapshot
+        * https://bf-lightning-api.readme.io/docs/realtime-board
+        """
+        return self._get("board", Board)
 
     @property
     def ticker(self) -> "Ticker":
-        return self.get("ticker", Ticker)
+        """lightning_ticker channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-ticker
+        """
+        return self._get("ticker", Ticker)
 
     @property
     def executions(self) -> "Executions":
-        return self.get("executions", Executions)
+        """lightning_executions channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-executions
+        """
+        return self._get("executions", Executions)
 
     @property
     def childorderevents(self) -> "ChildOrderEvents":
-        return self.get("childorderevents", ChildOrderEvents)
+        """child_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-child-order-events
+        """
+        return self._get("childorderevents", ChildOrderEvents)
 
     @property
     def childorders(self) -> "ChildOrders":
-        return self.get("childorders", ChildOrders)
+        """Handmade childorders from child_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-child-order-events
+        """
+        return self._get("childorders", ChildOrders)
 
     @property
     def parentorderevents(self) -> "ParentOrderEvents":
-        return self.get("parentorderevents", ParentOrderEvents)
+        """parent_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-parent-order-events
+        """
+        return self._get("parentorderevents", ParentOrderEvents)
 
     @property
     def parentorders(self) -> "ParentOrders":
-        return self.get("parentorders", ParentOrders)
+        """Handmade parentorders from parent_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-parent-order-events
+        """
+        return self._get("parentorders", ParentOrders)
 
     @property
     def positions(self) -> "Positions":
-        return self.get("positions", Positions)
+        """Handmade positions from child_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-child-order-events
+        """
+        return self._get("positions", Positions)
 
     @property
     def balance(self) -> "Balance":
-        return self.get("balance", Balance)
+        """Handmade balance from child_order_events channel.
+
+        https://bf-lightning-api.readme.io/docs/realtime-child-order-events
+        """
+        return self._get("balance", Balance)
 
 
 class Board(DataStore):
@@ -123,28 +171,29 @@ class Board(DataStore):
     def _init(self) -> None:
         self.mid_price: dict[str, float] = {}
 
-    def sorted(self, query: Item = None) -> dict[str, list[Item]]:
-        if query is None:
-            query = {}
-        result = {"SELL": [], "BUY": []}
-        for item in self:
-            if all(k in item and query[k] == item[k] for k in query):
-                result[item["side"]].append(item)
-        result["SELL"].sort(key=lambda x: x["price"])
-        result["BUY"].sort(key=lambda x: x["price"], reverse=True)
-        return result
+    def sorted(
+        self, query: Item | None = None, limit: int | None = None
+    ) -> dict[str, list[Item]]:
+        return self._sorted(
+            item_key="side",
+            item_asc_key="asks",
+            item_desc_key="bids",
+            sort_key="price",
+            query=query,
+            limit=limit,
+        )
 
     def _onmessage(self, product_code: str, message: Item) -> None:
         self.mid_price[product_code] = message["mid_price"]
-        for key, side in (("bids", "BUY"), ("asks", "SELL")):
-            for item in message[key]:
+        for side in ("asks", "bids"):
+            for item in message[side]:
                 if item["size"]:
                     self._insert([{"product_code": product_code, "side": side, **item}])
                 else:
                     self._delete([{"product_code": product_code, "side": side, **item}])
         board = self.sorted({"product_code": product_code})
         targets = []
-        for side, ope in (("BUY", operator.le), ("SELL", operator.gt)):
+        for side, ope in (("bids", operator.le), ("asks", operator.gt)):
             for item in board[side]:
                 if ope(item["price"], message["mid_price"]):
                     break
@@ -154,6 +203,10 @@ class Board(DataStore):
 
 
 class Ticker(DataStore):
+    """
+    Ticker 情報
+    """
+
     _KEYS = ["product_code"]
 
     def _onmessage(self, message: Item) -> None:
