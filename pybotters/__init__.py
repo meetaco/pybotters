@@ -8,6 +8,11 @@ from .models.binance import (
     BinanceSpotDataStore,
     BinanceUSDSMDataStore,
 )
+from .models.aster import (
+    AsterCOINMDataStore,
+    AsterSpotDataStore,
+    AsterUSDSMDataStore,
+)
 from .models.bitbank import bitbankDataStore, bitbankPrivateDataStore
 from .models.bitflyer import bitFlyerDataStore
 from .models.bitget import BitgetDataStore
@@ -43,6 +48,9 @@ __all__: tuple[str, ...] = (
     "BinanceCOINMDataStore",
     "BinanceSpotDataStore",
     "BinanceUSDSMDataStore",
+    "AsterCOINMDataStore",
+    "AsterSpotDataStore",
+    "AsterUSDSMDataStore",
     "BitMEXDataStore",
     "BitgetV2DataStore",
     "BitgetDataStore",
