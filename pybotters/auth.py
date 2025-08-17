@@ -95,6 +95,14 @@ class Auth:
         return args
 
     @staticmethod
+    def aster(args: tuple[str, URL], kwargs: dict[str, Any]) -> tuple[str, URL]:
+        """Aster authentication (Binance compatible)
+
+        Note: Aster APIはBinance認証方式と完全互換のため、binance()メソッドを呼び出し
+        """
+        return Auth.binance(args, kwargs)
+
+    @staticmethod
     def bitflyer(args: tuple[str, URL], kwargs: dict[str, Any]) -> tuple[str, URL]:
         method: str = args[0]
         url: URL = args[1]
@@ -569,6 +577,7 @@ class Hosts:
         "fapi.binance.com": Item("binance", Auth.binance),
         "dapi.binance.com": Item("binance", Auth.binance),
         "testnet.binancefuture.com": Item("binancefuture_testnet", Auth.binance),
+        "fapi.asterdex.com": Item("aster", Auth.aster),
         "api.bitflyer.com": Item("bitflyer", Auth.bitflyer),
         "api.coin.z.com": Item("gmocoin", Auth.gmocoin),
         "api.bitbank.cc": Item("bitbank", Auth.bitbank),

@@ -358,6 +358,15 @@ class Heartbeat:
             await asyncio.sleep(60.0)
 
     @staticmethod
+    async def aster(ws: ClientWebSocketResponse):
+        """Aster WebSocket keep-alive (Binance compatible)
+
+        Note: Aster WebSocketのkeep-alive方式はBinanceと完全互換のため、
+        binance()メソッドを呼び出し
+        """
+        await Heartbeat.binance(ws)
+
+    @staticmethod
     async def phemex(ws: ClientWebSocketResponse):
         while not ws.closed:
             await ws.send_str('{"method":"server.ping","params":[],"id":123}')
@@ -735,6 +744,7 @@ class HeartbeatHosts:
         "dstream.binancefuture.com": Heartbeat.binance,
         "testnet.binanceops.com": Heartbeat.binance,
         "testnetws.binanceops.com": Heartbeat.binance,
+        "fstream.asterdex.com": Heartbeat.aster,
         "phemex.com": Heartbeat.phemex,
         "api.phemex.com": Heartbeat.phemex,
         "vapi.phemex.com": Heartbeat.phemex,
