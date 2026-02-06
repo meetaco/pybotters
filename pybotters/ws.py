@@ -395,7 +395,17 @@ class Heartbeat:
     @staticmethod
     async def kucoin(ws: ClientWebSocketResponse):
         while not ws.closed:
-            await ws.send_str(f'{{"id": "{uuid.uuid4()}", "type": "ping"}}')
+            try:
+                await ws.send_str(f'{{"id": "{uuid.uuid4()}", "type": "ping"}}')
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("Heartbeat kucoin failed: %s", e)
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+                break
             await asyncio.sleep(15)
 
     @staticmethod
