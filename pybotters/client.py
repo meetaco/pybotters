@@ -257,6 +257,9 @@ class Client:
         autoping: bool = True,
         heartbeat: float = 10.0,
         auth: type[Auth] | None = Auth,
+        kucoin_refresh: bool = True,
+        kucoin_refresh_interval: float = 60.0 * 60.0 * 23.0,
+        kucoin_force_reconnect: bool = True,
         **kwargs: Any,
     ) -> WebSocketApp:
         """WebSocket request.
@@ -273,6 +276,9 @@ class Client:
             autoping: Ping に対する自動 Pong 応答 (デフォルト True)
             heartbeat: WebSocket ハートビート (デフォルト 10.0 秒)
             auth: 認証オプション (デフォルトで有効、None で無効)
+            kucoin_refresh: KuCoin WS 接続のトークンを自動更新 (デフォルト True)
+            kucoin_refresh_interval: KuCoin WS トークン更新間隔 (デフォルト 23 時間)
+            kucoin_force_reconnect: トークン更新後に接続を再確立 (デフォルト True)
             **kwargs: :meth:`aiohttp.ClientSession.ws_connect` にバイパスされる引数
 
         Returns:
@@ -293,6 +299,9 @@ class Client:
             autoping=autoping,
             heartbeat=heartbeat,
             auth=auth,
+            kucoin_refresh=kucoin_refresh,
+            kucoin_refresh_interval=kucoin_refresh_interval,
+            kucoin_force_reconnect=kucoin_force_reconnect,
             **kwargs,
         )
 

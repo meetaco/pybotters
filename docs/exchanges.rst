@@ -552,6 +552,12 @@ WebSocket
 
     https://www.kucoin.com/docs/websocket/basic-info/ping
 
+* Token refresh
+    KuCoin の WebSocket トークンは一定時間で失効するため、既定で
+    ``/api/v1/bullet-private`` (認証あり) / ``/api/v1/bullet-public`` (認証なし) を定期的に再 POST し、
+    取得した URL を次回接続用に更新します。更新後に接続を再確立する挙動は
+    ``kucoin_force_reconnect`` で制御できます。
+
 DataStore
 ~~~~~~~~~
 

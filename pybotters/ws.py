@@ -48,6 +48,32 @@ def pretty_modulename(e: Exception) -> str:
     return modulename
 
 
+def _kucoin_base_url(ws_host: str | None) -> str | None:
+    if ws_host == "ws-api-spot.kucoin.com":
+        return "https://api.kucoin.com"
+    if ws_host == "ws-api-futures.kucoin.com":
+        return "https://api-futures.kucoin.com"
+    return None
+
+
+def _kucoin_build_endpoint(data: dict[str, Any]) -> str:
+    token = data["token"]
+    servers = data["instanceServers"]
+    connect_id = str(uuid.uuid4())
+    endpoint = None
+
+    for server in servers:
+        host = aiohttp.typedefs.URL(server["endpoint"]).host
+        if host in HeartbeatHosts.items:
+            endpoint = server["endpoint"]
+            break
+
+    if endpoint is None:
+        endpoint = servers[0]["endpoint"]
+
+    return f"{endpoint}?token={token}&acceptUserMessage=true&connectId={connect_id}"
+
+
 class WebSocketApp:
     _BACKOFF_MIN = 1.92
     _BACKOFF_MAX = 60.0
@@ -84,6 +110,12 @@ class WebSocketApp:
 
         self._autoping = kwargs.pop("autoping", True)
         self._pings: dict[bytes, asyncio.Event] = {}
+        self._kucoin_refresh = kwargs.pop("kucoin_refresh", True)
+        self._kucoin_refresh_interval = kwargs.pop(
+            "kucoin_refresh_interval", 60.0 * 60.0 * 23.0
+        )
+        self._kucoin_force_reconnect = kwargs.pop("kucoin_force_reconnect", True)
+        self._kucoin_refresh_task: asyncio.Task[None] | None = None
 
         if send_str is None:
             send_str = []
@@ -127,6 +159,7 @@ class WebSocketApp:
                 **kwargs,
             )
         )
+        self._maybe_start_kucoin_refresh()
 
     @property
     def url(self) -> str:
@@ -216,6 +249,49 @@ class WebSocketApp:
             await self._ws_send(ws, send_str, send_bytes, send_json)
 
             await self._ws_receive(ws, hdlr_str, hdlr_bytes, hdlr_json)
+
+    def _maybe_start_kucoin_refresh(self) -> None:
+        if not self._kucoin_refresh:
+            return
+        if self._kucoin_refresh_task is not None:
+            return
+        host = aiohttp.typedefs.URL(self._url).host
+        if host not in {
+            "ws-api-spot.kucoin.com",
+            "ws-api-futures.kucoin.com",
+        }:
+            return
+        self._kucoin_refresh_task = self._loop.create_task(
+            self._kucoin_refresh_loop()
+        )
+
+    async def _kucoin_refresh_loop(self) -> None:
+        while not self._session.closed:
+            await asyncio.sleep(self._kucoin_refresh_interval)
+            try:
+                new_url = await self._kucoin_refresh_endpoint()
+                if new_url:
+                    self._url = new_url
+                    if self._kucoin_force_reconnect and self._current_ws:
+                        await self._current_ws.close()
+            except Exception as e:
+                logger.warning(f"{pretty_modulename(e)}: {e}")
+
+    async def _kucoin_refresh_endpoint(self) -> str | None:
+        host = aiohttp.typedefs.URL(self._url).host
+        base_url = _kucoin_base_url(host)
+        if base_url is None:
+            return None
+        has_creds = "kucoin" in self._session.__dict__.get("_apis", {})
+        path = "/api/v1/bullet-private" if has_creds else "/api/v1/bullet-public"
+        url = f"{base_url}{path}"
+        auth = _Auth if has_creds else None
+        async with self._session.post(url, auth=auth) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                logger.warning(f"KuCoin token refresh failed: {data}")
+                return None
+        return _kucoin_build_endpoint(data["data"])
 
     async def _ws_send(
         self,
