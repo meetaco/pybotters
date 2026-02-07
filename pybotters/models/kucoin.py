@@ -4,11 +4,11 @@ import asyncio
 import copy
 import logging
 import time
-import uuid
 from typing import TYPE_CHECKING, Any, Awaitable
 
 import aiohttp
 
+from ..exchanges import kucoin as kucoin_ex
 from ..store import DataStore, DataStoreCollection
 
 if TYPE_CHECKING:
@@ -341,30 +341,18 @@ class KuCoinDataStore(DataStoreCollection):
 
     @classmethod
     def _create_endpoint(cls, data):
-        token = data["token"]
-        servers = data["instanceServers"]
-        id = str(uuid.uuid4())
-        endpoint, host = None, None
-
+        heartbeat_hosts = None
         try:
             from pybotters.ws import HeartbeatHosts
 
-            for s in servers:
-                host = aiohttp.typedefs.URL(s["endpoint"]).host
-                # HeartbeatHostsに登録してあるエンドポイントを優先して使う
-                if host in HeartbeatHosts.items:
-                    endpoint = s["endpoint"]
-                    break
+            heartbeat_hosts = set(HeartbeatHosts.items.keys())
         except ImportError as e:
             logger.warning(
                 "KuCoinDataStore cannot use 'HeartbeatHosts' "
                 f"({e.__class__.__name__}: {e})"
             )
-        # HeartbeatHostsに登録してあるエンドポイントがなかった場合、一番最初のものを使う
-        if endpoint is None:
-            endpoint = servers[0]["endpoint"]
 
-        return f"{endpoint}?token={token}&acceptUserMessage=true&connectId={id}"
+        return kucoin_ex.build_ws_endpoint(data, heartbeat_hosts=heartbeat_hosts)
 
 
 class _InsertStore(DataStore):
