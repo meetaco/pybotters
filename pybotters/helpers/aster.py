@@ -75,14 +75,13 @@ def normalize_params(params: Mapping[str, Any]) -> dict[str, str]:
 
 
 def sign_params(
-    params: Mapping[str, Any],
+    normalized_params: Mapping[str, str],
     user: str,
     signer: str,
     private_key: str,
     nonce: int,
 ) -> str:
-    normalized = normalize_params(params)
-    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    payload = json.dumps(dict(normalized_params), sort_keys=True, separators=(",", ":"))
     message = abi_encode(
         ["string", "address", "address", "uint256"],
         [payload, user, signer, nonce],

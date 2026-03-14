@@ -61,7 +61,8 @@ class AsterUSDSMDataStore(BinanceUSDSMDataStore):
 class AsterCOINMDataStore(BinanceCOINMDataStore):
     """Aster COIN-M の DataStoreCollection クラス
 
-    Note: Aster APIはBinance API完全互換のため、BinanceCOINMDataStoreを継承
+    Note: 公開されている Aster v3 docs には COIN-M 用の初期化 endpoint が
+    ないため、現時点では BinanceCOINMDataStore の既定値をそのまま使う。
     """
 
     pass

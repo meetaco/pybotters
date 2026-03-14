@@ -13,6 +13,15 @@ from multidict import CIMultiDict
 from yarl import URL
 
 import pybotters.auth
+import pybotters.helpers.aster
+
+
+def _freeze_aster_v3_signature_inputs(
+    mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mocker.patch("time.time", return_value=2085848896.0)
+    mocker.patch("time.time_ns", return_value=2085848896000000000)
+    monkeypatch.setattr(pybotters.helpers.aster, "_last_nonce", 0)
 
 
 def util_api_generater():  # pragma: no cover
@@ -391,15 +400,15 @@ def test_aster_v1_calls_binance(mock_session, mocker: pytest_mock.MockerFixture)
     patched.assert_called_once_with(args, kwargs)
 
 
-def test_aster_v3_get(mock_session, mocker: pytest_mock.MockerFixture):
+def test_aster_v3_get(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
     mock_session.__dict__["_apis"]["aster"] = (
         "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
     )
-    mocker.patch("time.time", return_value=2085848896.0)
-    mocker.patch("time.time_ns", return_value=2085848896000000000)
-    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
 
     args = (
         "GET",
@@ -431,15 +440,15 @@ def test_aster_v3_get(mock_session, mocker: pytest_mock.MockerFixture):
     assert kwargs["data"] is None
 
 
-def test_aster_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
+def test_aster_v3_post(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
     mock_session.__dict__["_apis"]["aster"] = (
         "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
     )
-    mocker.patch("time.time", return_value=2085848896.0)
-    mocker.patch("time.time_ns", return_value=2085848896000000000)
-    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
 
     args = (
         "POST",
@@ -485,15 +494,15 @@ def test_aster_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
     }
 
 
-def test_aster_v3_get_with_body(mock_session, mocker: pytest_mock.MockerFixture):
+def test_aster_v3_get_with_body(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
     mock_session.__dict__["_apis"]["aster"] = (
         "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
     )
-    mocker.patch("time.time", return_value=2085848896.0)
-    mocker.patch("time.time_ns", return_value=2085848896000000000)
-    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
 
     args = (
         "GET",
@@ -523,6 +532,87 @@ def test_aster_v3_get_with_body(mock_session, mocker: pytest_mock.MockerFixture)
         ),
     }
     assert kwargs["data"]._value == b"orderId=2194215"
+
+
+def test_aster_v3_post_with_query_only(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
+
+    args = (
+        "POST",
+        URL("https://fapi.asterdex.com/fapi/v3/order").with_query(
+            {"symbol": "SANDUSDT", "orderId": "2194215"}
+        ),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+
+    assert actual_args[1].query == {
+        "symbol": "SANDUSDT",
+        "orderId": "2194215",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
+            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+        ),
+    }
+    assert kwargs["data"] is None
+
+
+def test_aster_v3_post_with_query_and_body(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
+
+    args = (
+        "POST",
+        URL("https://fapi.asterdex.com/fapi/v3/order").with_query(
+            {"symbol": "SANDUSDT"}
+        ),
+    )
+    kwargs = {
+        "data": {"orderId": "2194215"},
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+    actual_body = dict(parse_qsl(kwargs["data"]._value.decode()))
+
+    assert actual_args == args
+    assert actual_args[1].query == {"symbol": "SANDUSDT"}
+    assert actual_body == {
+        "orderId": "2194215",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
+            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+        ),
+    }
 
 
 def test_aster_v3_ws_nosign(mock_session):

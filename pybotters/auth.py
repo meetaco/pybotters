@@ -108,13 +108,18 @@ class Auth:
 
         session: aiohttp.ClientSession = kwargs["session"]
         credentials = session.__dict__["_apis"][Hosts.items[url.host].name]
-        user = credentials[0]
-        secret_or_signer = credentials[1]
-        private_key = credentials[2] if len(credentials) >= 3 else ""
 
         # Keep compatibility with legacy v1 API credentials.
-        if not private_key:
+        if len(credentials) < 3:
             return Auth.binance(args, kwargs)
+
+        user = credentials[0]
+        secret_or_signer = credentials[1]
+        private_key = (
+            credentials[2].decode()
+            if isinstance(credentials[2], (bytes, bytearray))
+            else credentials[2]
+        )
 
         # Do not sign WebSocket upgrade requests.
         if headers.get("Upgrade") == "websocket":
@@ -135,13 +140,19 @@ class Auth:
             private_key,
         )
 
-        if method == METH_GET or (not normalized_body and query_params):
+        # Query-only signed requests keep auth fields in the URL, matching the
+        # Aster v3 examples for send_by_url style requests.
+        signed_query_only_request = method == METH_GET or (
+            method != METH_GET and query_params and not normalized_body
+        )
+        if signed_query_only_request:
             url = url.with_query(signed_payload)
             args = (method, url)
             if normalized_body:
                 kwargs["data"] = FormData(normalized_body)()
             return args
 
+        # Keep business query params in the URL for mixed query/body requests.
         request_body = normalized_body.copy()
         for key in ("recvWindow", "timestamp", "nonce", "user", "signer", "signature"):
             request_body[key] = signed_payload[key]

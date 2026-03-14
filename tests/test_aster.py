@@ -19,9 +19,9 @@ def test_aster_normalize_params():
     }
 
 
-def test_aster_get_nonce_us_monotonic(mocker):
+def test_aster_get_nonce_us_monotonic(mocker, monkeypatch):
     mocker.patch("time.time_ns", return_value=1_000)
-    mocker.patch("pybotters.helpers.aster._last_nonce", 1)
+    monkeypatch.setattr(pybotters.helpers.aster, "_last_nonce", 1)
 
     actual = pybotters.helpers.aster.get_nonce_us()
 
