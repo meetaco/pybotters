@@ -839,6 +839,7 @@ async def test_heartbeat_bittrade(mocker: pytest_mock.MockerFixture, test_input)
     ("test_input",),
     [
         (pybotters.ws.Heartbeat.binance,),
+        (pybotters.ws.Heartbeat.aster,),
     ],
 )
 async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):

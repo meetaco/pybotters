@@ -19,6 +19,15 @@ def test_aster_normalize_params():
     }
 
 
+def test_aster_get_nonce_us_monotonic(mocker):
+    mocker.patch("time.time_ns", return_value=1_000)
+    mocker.patch("pybotters.helpers.aster._last_nonce", 1)
+
+    actual = pybotters.helpers.aster.get_nonce_us()
+
+    assert actual == 2
+
+
 def test_aster_spot_datastore_endpoints():
     assert pybotters.AsterSpotDataStore._ORDERBOOK_INIT_ENDPOINT == "/api/v3/depth"
     assert pybotters.AsterSpotDataStore._ORDER_INIT_ENDPOINT == "/api/v3/openOrders"
@@ -32,7 +41,11 @@ def test_aster_usdsm_datastore_endpoints():
     assert pybotters.AsterUSDSMDataStore._ORDERBOOK_INIT_ENDPOINT == "/fapi/v3/depth"
     assert pybotters.AsterUSDSMDataStore._BALANCE_INIT_ENDPOINT == "/fapi/v3/balance"
     assert pybotters.AsterUSDSMDataStore._ORDER_INIT_ENDPOINT == "/fapi/v3/openOrders"
-    assert pybotters.AsterUSDSMDataStore._LISTENKEY_INIT_ENDPOINT == "/fapi/v3/listenKey"
+    assert (
+        pybotters.AsterUSDSMDataStore._LISTENKEY_INIT_ENDPOINT == "/fapi/v3/listenKey"
+    )
     assert pybotters.AsterUSDSMDataStore._KLINE_INIT_ENDPOINT == "/fapi/v3/klines"
-    assert pybotters.AsterUSDSMDataStore._POSITION_INIT_ENDPOINT == "/fapi/v3/positionRisk"
+    assert (
+        pybotters.AsterUSDSMDataStore._POSITION_INIT_ENDPOINT == "/fapi/v3/positionRisk"
+    )
     assert pybotters.AsterUSDSMDataStore._COMPOSITEINDEX_INIT_ENDPOINT is None

@@ -485,6 +485,68 @@ def test_aster_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
     }
 
 
+def test_aster_v3_get_with_body(mock_session, mocker: pytest_mock.MockerFixture):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    mocker.patch("time.time", return_value=2085848896.0)
+    mocker.patch("time.time_ns", return_value=2085848896000000000)
+    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+
+    args = (
+        "GET",
+        URL("https://fapi.asterdex.com/fapi/v3/order").with_query(
+            {"symbol": "SANDUSDT"}
+        ),
+    )
+    kwargs = {
+        "data": {"orderId": "2194215"},
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+
+    assert actual_args[1].query == {
+        "symbol": "SANDUSDT",
+        "orderId": "2194215",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
+            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+        ),
+    }
+    assert kwargs["data"]._value == b"orderId=2194215"
+
+
+def test_aster_v3_ws_nosign(mock_session):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    args = (
+        "GET",
+        URL("wss://fapi.asterdex.com/ws/example"),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict({"Upgrade": "websocket"}),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+
+    assert actual_args == args
+    assert kwargs["data"] is None
+
+
 def test_bitflyer_get(mock_session, mocker: pytest_mock.MockerFixture):
     mocker.patch("time.time", return_value=2085848896.0)
     args = (
