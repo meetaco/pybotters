@@ -3,15 +3,15 @@ from __future__ import annotations
 from .__version__ import __version__
 from .auth import Auth
 from .client import Client, FetchResult, NotJSONContent
-from .models.binance import (
-    BinanceCOINMDataStore,
-    BinanceSpotDataStore,
-    BinanceUSDSMDataStore,
-)
 from .models.aster import (
     AsterCOINMDataStore,
     AsterSpotDataStore,
     AsterUSDSMDataStore,
+)
+from .models.binance import (
+    BinanceCOINMDataStore,
+    BinanceSpotDataStore,
+    BinanceUSDSMDataStore,
 )
 from .models.bitbank import bitbankDataStore, bitbankPrivateDataStore
 from .models.bitflyer import bitFlyerDataStore
