@@ -1,6 +1,7 @@
 import datetime
 import json
 import random
+from urllib.parse import parse_qsl
 
 import aiohttp.abc
 import aiohttp.formdata
@@ -59,6 +60,10 @@ def mock_session(mocker: pytest_mock.MockerFixture):
         "binancefuture_testnet": (
             "EDYH5JVoHJlhroiQkDntBHn8",
             b"lMFc3hibQUEOzSeG6YEvx7lMRgNBUlF07PVEm9g9U6HEWtEZ",
+        ),
+        "aster": (
+            "k1Jv7qfZ1Q9pLw8sAe4nDm2H",
+            b"n5Yv3QxkP7mHc2Rb9tLd4Ws6Fg1Jz8Ua0eKr5Np2Bx6Vh3Qc",
         ),
         "bitflyer": (
             "Pcm1rbtSRqKxTvirZDDOct1k",
@@ -363,6 +368,121 @@ def test_binance_ws_nosign(mock_session, mocker: pytest_mock.MockerFixture):
     assert args == expected_args
     assert kwargs["data"] == expected_kwargs["data"]
     assert kwargs["headers"] == expected_kwargs["headers"]
+
+
+def test_aster_v1_calls_binance(mock_session, mocker: pytest_mock.MockerFixture):
+    expected_args = ("GET", URL("https://fapi.asterdex.com/fapi/v1/order"))
+    patched = mocker.patch.object(
+        pybotters.auth.Auth, "binance", return_value=expected_args
+    )
+    args = (
+        "GET",
+        URL("https://fapi.asterdex.com/fapi/v1/order"),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+
+    assert actual_args == expected_args
+    patched.assert_called_once_with(args, kwargs)
+
+
+def test_aster_v3_get(mock_session, mocker: pytest_mock.MockerFixture):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    mocker.patch("time.time", return_value=2085848896.0)
+    mocker.patch("time.time_ns", return_value=2085848896000000000)
+    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+
+    args = (
+        "GET",
+        URL("https://fapi.asterdex.com/fapi/v3/order").with_query(
+            {"symbol": "SANDUSDT", "orderId": "2194215"}
+        ),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+
+    assert actual_args[1].query == {
+        "symbol": "SANDUSDT",
+        "orderId": "2194215",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
+            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+        ),
+    }
+    assert kwargs["data"] is None
+
+
+def test_aster_v3_post(mock_session, mocker: pytest_mock.MockerFixture):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    mocker.patch("time.time", return_value=2085848896.0)
+    mocker.patch("time.time_ns", return_value=2085848896000000000)
+    mocker.patch("pybotters.helpers.aster._last_nonce", 0)
+
+    args = (
+        "POST",
+        URL("https://fapi.asterdex.com/fapi/v3/order"),
+    )
+    kwargs = {
+        "data": {
+            "symbol": "SANDUSDT",
+            "positionSide": "BOTH",
+            "type": "LIMIT",
+            "side": "BUY",
+            "timeInForce": "GTC",
+            "quantity": "30",
+            "price": 0.325,
+            "reduceOnly": True,
+        },
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+    actual_body = dict(parse_qsl(kwargs["data"]._value.decode()))
+
+    assert actual_args == args
+    assert actual_body == {
+        "symbol": "SANDUSDT",
+        "positionSide": "BOTH",
+        "type": "LIMIT",
+        "side": "BUY",
+        "timeInForce": "GTC",
+        "quantity": "30",
+        "price": "0.325",
+        "reduceOnly": "True",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "0x50ab34b7140259fce2d0c1dd6b4a07b1383a7d2eeddee541e6f157dd74833dfa"
+            "2c2d7a714ce19b56175f7dd5419ce5af5a4de7a6a1d0ac61ea56f7f8e227c8cb1b"
+        ),
+    }
 
 
 def test_bitflyer_get(mock_session, mocker: pytest_mock.MockerFixture):
