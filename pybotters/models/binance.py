@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Awaitable
+from typing import TYPE_CHECKING, Any, Awaitable, cast
 
 import aiohttp
 
@@ -175,11 +175,13 @@ class BinanceDataStoreBase(DataStoreCollection):
 
     async def _listenkey(self, url: URL, session: aiohttp.ClientSession):
         if url.path.startswith(BinanceSpotDataStore._LISTENKEY_INIT_ENDPOINT):
-            params = {"listenKey": self.listenkey}
+            params = (
+                {"listenKey": self.listenkey} if self.listenkey is not None else None
+            )
         else:
             params = None
         while not session.closed:
-            async with session.put(url, params=params, auth=Auth) as resp:
+            async with session.put(url, params=params, auth=cast("Any", Auth)) as resp:
                 text = await resp.text()
             try:
                 resp.raise_for_status()
@@ -381,8 +383,8 @@ class BinanceSpotDataStore(BinanceDataStoreBase):
     _ORDER_INIT_ENDPOINT = "/api/v3/openOrders"
     _LISTENKEY_INIT_ENDPOINT = "/api/v3/userDataStream"
     _KLINE_INIT_ENDPOINT = "/api/v3/klines"
-    _ACCOUNT_INIT_ENDPOINT = "/api/v3/account"
-    _OCOORDER_INIT_ENDPOINT = "/api/v3/openOrderList"
+    _ACCOUNT_INIT_ENDPOINT: str | None = "/api/v3/account"
+    _OCOORDER_INIT_ENDPOINT: str | None = "/api/v3/openOrderList"
 
     def _init(self):
         super()._init()
@@ -438,7 +440,7 @@ class BinanceUSDSMDataStore(BinanceFuturesDataStoreBase):
     _LISTENKEY_INIT_ENDPOINT = "/fapi/v1/listenKey"
     _KLINE_INIT_ENDPOINT = "/fapi/v1/klines"
     _POSITION_INIT_ENDPOINT = "/fapi/v2/positionRisk"
-    _COMPOSITEINDEX_INIT_ENDPOINT = "/fapi/v1/indexInfo"
+    _COMPOSITEINDEX_INIT_ENDPOINT: str | None = "/fapi/v1/indexInfo"
 
     def _init(self):
         super()._init()

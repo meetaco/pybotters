@@ -15,7 +15,7 @@ from aiohttp.payload import JsonPayload
 from multidict import CIMultiDict, MultiDict
 from yarl import URL
 
-from pybotters.helpers import hyperliquid
+from pybotters.helpers import aster, hyperliquid
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -96,11 +96,69 @@ class Auth:
 
     @staticmethod
     def aster(args: tuple[str, URL], kwargs: dict[str, Any]) -> tuple[str, URL]:
-        """Aster authentication (Binance compatible)
+        """Aster authentication.
 
-        Note: Aster APIはBinance認証方式と完全互換のため、binance()メソッドを呼び出し
+        - Legacy v1 credentials: ``[api_key, api_secret]`` -> Binance compatible HMAC
+        - v3 credentials: ``[user, signer, private_key]`` -> wallet signature
         """
-        return Auth.binance(args, kwargs)
+        method: str = args[0]
+        url: URL = args[1]
+        data: dict[str, Any] = kwargs["data"] or {}
+        headers: CIMultiDict = kwargs["headers"]
+
+        session: aiohttp.ClientSession = kwargs["session"]
+        credentials = session.__dict__["_apis"][Hosts.items[url.host].name]
+
+        # Keep compatibility with legacy v1 API credentials.
+        if len(credentials) < 3:
+            return Auth.binance(args, kwargs)
+
+        user = credentials[0]
+        secret_or_signer = credentials[1]
+        private_key = (
+            credentials[2].decode()
+            if isinstance(credentials[2], (bytes, bytearray))
+            else credentials[2]
+        )
+
+        # Do not sign WebSocket upgrade requests.
+        if headers.get("Upgrade") == "websocket":
+            return args
+
+        signer = (
+            secret_or_signer.decode()
+            if isinstance(secret_or_signer, (bytes, bytearray))
+            else secret_or_signer
+        )
+
+        normalized_body = aster.normalize_params(data)
+        query_params = dict(url.query.items())
+        signed_payload = aster.build_signed_params(
+            {**query_params, **normalized_body},
+            user,
+            signer,
+            private_key,
+        )
+
+        # Query-only signed requests keep auth fields in the URL, matching the
+        # Aster v3 examples for send_by_url style requests.
+        signed_query_only_request = method == METH_GET or (
+            method != METH_GET and query_params and not normalized_body
+        )
+        if signed_query_only_request:
+            url = url.with_query(signed_payload)
+            args = (method, url)
+            if normalized_body:
+                kwargs["data"] = FormData(normalized_body)()
+            return args
+
+        # Keep business query params in the URL for mixed query/body requests.
+        request_body = normalized_body.copy()
+        for key in ("recvWindow", "timestamp", "nonce", "user", "signer", "signature"):
+            request_body[key] = signed_payload[key]
+        kwargs["data"] = FormData(request_body)()
+
+        return args
 
     @staticmethod
     def bitflyer(args: tuple[str, URL], kwargs: dict[str, Any]) -> tuple[str, URL]:
