@@ -1,8 +1,9 @@
+import pytest
+from yarl import URL
+
 import pybotters
 import pybotters.auth
 import pybotters.helpers.aster
-import pytest
-from yarl import URL
 
 
 def test_aster_normalize_params():
@@ -40,6 +41,33 @@ def test_aster_encode_signing_message_preserves_param_order():
     assert (
         actual
         == "symbol=ASTERUSDT&type=LIMIT&side=BUY&timeInForce=GTC&quantity=100&price=0.4&nonce=123456&user=0xuser&signer=0xsigner"
+    )
+
+
+def test_aster_sign_params_accepts_private_key_without_0x():
+    params = {
+        "symbol": "SANDUSDT",
+        "recvWindow": "50000",
+        "timestamp": "2085848896000",
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+    }
+    prefixed = "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1"
+    unprefixed = prefixed[2:]
+
+    assert pybotters.helpers.aster.sign_params(
+        params,
+        params["user"],
+        params["signer"],
+        prefixed,
+        int(params["nonce"]),
+    ) == pybotters.helpers.aster.sign_params(
+        params,
+        params["user"],
+        params["signer"],
+        unprefixed,
+        int(params["nonce"]),
     )
 
 
@@ -109,7 +137,10 @@ async def test_aster_listenkey_keepalive_omits_listenkey_param(monkeypatch):
 
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
 
-    await datastore._listenkey(URL("https://sapi.asterdex.com/api/v3/listenKey"), session)
+    await datastore._listenkey(
+        URL("https://sapi.asterdex.com/api/v3/listenKey"),
+        session,
+    )
 
     assert len(session.calls) == 1
     _, kwargs = session.calls[0]
