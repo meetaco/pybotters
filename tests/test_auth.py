@@ -433,8 +433,8 @@ def test_aster_v3_get(
         "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "signature": (
-            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
-            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+            "2301033274657d40727e980d4234f3ef4530b5fcb43881d1566b7b64c3bb7a93"
+            "00101285a5414c5dc91e7fa8714e45909c01c14a83fc979ed64fed492198ff7c1b"
         ),
     }
     assert kwargs["data"] is None
@@ -481,15 +481,15 @@ def test_aster_v3_post(
         "timeInForce": "GTC",
         "quantity": "30",
         "price": "0.325",
-        "reduceOnly": "True",
+        "reduceOnly": "true",
         "recvWindow": "50000",
         "timestamp": "2085848896000",
         "nonce": "2085848896000000",
         "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "signature": (
-            "0x50ab34b7140259fce2d0c1dd6b4a07b1383a7d2eeddee541e6f157dd74833dfa"
-            "2c2d7a714ce19b56175f7dd5419ce5af5a4de7a6a1d0ac61ea56f7f8e227c8cb1b"
+            "d1574f60db04f88d24f847c7d9ae5d52ccd248c84b9e112b8dc09a7086828f97"
+            "0575bb4e4b433227699a3cfaaf43b06499d6878838e7b766c8ee1001a009e7cf1c"
         ),
     }
 
@@ -527,8 +527,8 @@ def test_aster_v3_get_with_body(
         "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "signature": (
-            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
-            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+            "2301033274657d40727e980d4234f3ef4530b5fcb43881d1566b7b64c3bb7a93"
+            "00101285a5414c5dc91e7fa8714e45909c01c14a83fc979ed64fed492198ff7c1b"
         ),
     }
     assert kwargs["data"]._value == b"orderId=2194215"
@@ -567,8 +567,8 @@ def test_aster_v3_post_with_query_only(
         "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "signature": (
-            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
-            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+            "2301033274657d40727e980d4234f3ef4530b5fcb43881d1566b7b64c3bb7a93"
+            "00101285a5414c5dc91e7fa8714e45909c01c14a83fc979ed64fed492198ff7c1b"
         ),
     }
     assert kwargs["data"] is None
@@ -609,8 +609,78 @@ def test_aster_v3_post_with_query_and_body(
         "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
         "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
         "signature": (
-            "0xc9372fd8b1fc0b511c2430ff51f0c95cb567409501599836841e08e07d921e2a"
-            "326e421777183790f73c7db75934cd8c08a894aa9c79b40ba860a4fc0900be301b"
+            "2301033274657d40727e980d4234f3ef4530b5fcb43881d1566b7b64c3bb7a93"
+            "00101285a5414c5dc91e7fa8714e45909c01c14a83fc979ed64fed492198ff7c1b"
+        ),
+    }
+
+
+def test_aster_v3_post_listenkey(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
+
+    args = (
+        "POST",
+        URL("https://fapi.asterdex.com/fapi/v3/listenKey"),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+    actual_body = dict(parse_qsl(kwargs["data"]._value.decode()))
+
+    assert actual_args == args
+    assert actual_body == {
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "1207706cd30167c2e77660756a923f757452fc29003581cf3fb14a09dc57f5ef"
+            "15eeddb35da3e49953ace1912884dbebbdddda68cc3220079fa5b6521c53200f1c"
+        ),
+    }
+
+
+def test_aster_v3_put_listenkey(
+    mock_session, mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    mock_session.__dict__["_apis"]["aster"] = (
+        "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        b"0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "0x4fd0a42218f3eae43a6ce26d22544e986139a01e5b34a62db53757ffca81bae1",
+    )
+    _freeze_aster_v3_signature_inputs(mocker, monkeypatch)
+
+    args = (
+        "PUT",
+        URL("https://sapi.asterdex.com/api/v3/listenKey"),
+    )
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.aster(args, kwargs)
+    actual_body = dict(parse_qsl(kwargs["data"]._value.decode()))
+
+    assert actual_args == args
+    assert actual_body == {
+        "nonce": "2085848896000000",
+        "user": "0x63DD5aCC6b1aa0f563956C0e534DD30B6dcF7C4e",
+        "signer": "0x21cF8Ae13Bb72632562c6Fff438652Ba1a151bb0",
+        "signature": (
+            "1207706cd30167c2e77660756a923f757452fc29003581cf3fb14a09dc57f5ef"
+            "15eeddb35da3e49953ace1912884dbebbdddda68cc3220079fa5b6521c53200f1c"
         ),
     }
 

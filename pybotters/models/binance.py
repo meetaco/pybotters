@@ -174,7 +174,10 @@ class BinanceDataStoreBase(DataStoreCollection):
         raise NotImplementedError
 
     async def _listenkey(self, url: URL, session: aiohttp.ClientSession):
-        if url.path.startswith(BinanceSpotDataStore._LISTENKEY_INIT_ENDPOINT):
+        is_aster = isinstance(url.host, str) and url.host.endswith("asterdex.com")
+        if is_aster:
+            params = None
+        elif url.path.startswith(BinanceSpotDataStore._LISTENKEY_INIT_ENDPOINT):
             params = (
                 {"listenKey": self.listenkey} if self.listenkey is not None else None
             )
