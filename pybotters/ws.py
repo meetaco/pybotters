@@ -11,7 +11,6 @@ import logging
 import random
 import struct
 import time
-import uuid
 import zlib
 from dataclasses import dataclass
 from secrets import token_hex
@@ -21,6 +20,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from .auth import Auth as _Auth
+from .exchanges import kucoin as kucoin_ex
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -84,6 +84,12 @@ class WebSocketApp:
 
         self._autoping = kwargs.pop("autoping", True)
         self._pings: dict[bytes, asyncio.Event] = {}
+        self._kucoin_refresh = kwargs.pop("kucoin_refresh", True)
+        self._kucoin_refresh_interval = kwargs.pop(
+            "kucoin_refresh_interval", 60.0 * 60.0 * 23.0
+        )
+        self._kucoin_force_reconnect = kwargs.pop("kucoin_force_reconnect", True)
+        self._kucoin_refresh_task: asyncio.Task[None] | None = None
 
         if send_str is None:
             send_str = []
@@ -127,6 +133,7 @@ class WebSocketApp:
                 **kwargs,
             )
         )
+        self._maybe_start_kucoin_refresh()
 
     @property
     def url(self) -> str:
@@ -216,6 +223,37 @@ class WebSocketApp:
             await self._ws_send(ws, send_str, send_bytes, send_json)
 
             await self._ws_receive(ws, hdlr_str, hdlr_bytes, hdlr_json)
+
+    def _maybe_start_kucoin_refresh(self) -> None:
+        if not self._kucoin_refresh:
+            return
+        if self._kucoin_refresh_task is not None:
+            return
+        host = aiohttp.typedefs.URL(self._url).host
+        if not kucoin_ex.is_kucoin_ws_host(host):
+            return
+        self._kucoin_refresh_task = self._loop.create_task(
+            self._kucoin_refresh_loop()
+        )
+
+    async def _kucoin_refresh_loop(self) -> None:
+        while not self._session.closed:
+            await asyncio.sleep(self._kucoin_refresh_interval)
+            try:
+                new_url = await self._kucoin_refresh_endpoint()
+                self._url = new_url
+                if self._kucoin_force_reconnect and self._current_ws:
+                    await self._current_ws.close()
+            except Exception as e:
+                logger.warning(f"{pretty_modulename(e)}: {e}")
+
+    async def _kucoin_refresh_endpoint(self) -> str:
+        return await kucoin_ex.refresh_ws_endpoint(
+            self._session,
+            self._url,
+            auth_class=_Auth,
+            heartbeat_hosts=set(HeartbeatHosts.items.keys()),
+        )
 
     async def _ws_send(
         self,
