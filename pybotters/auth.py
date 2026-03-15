@@ -132,12 +132,14 @@ class Auth:
         )
 
         normalized_body = aster.normalize_params(data)
-        query_params = dict(url.query.items())
+        query_params = aster.normalize_params(dict(url.query.items()))
+        is_listenkey_endpoint = url.name == "listenKey"
         signed_payload = aster.build_signed_params(
             {**query_params, **normalized_body},
             user,
             signer,
             private_key,
+            include_timestamp=not is_listenkey_endpoint,
         )
 
         # Query-only signed requests keep auth fields in the URL, matching the
@@ -154,8 +156,13 @@ class Auth:
 
         # Keep business query params in the URL for mixed query/body requests.
         request_body = normalized_body.copy()
-        for key in ("recvWindow", "timestamp", "nonce", "user", "signer", "signature"):
-            request_body[key] = signed_payload[key]
+        request_body.update(
+            {
+                key: value
+                for key, value in signed_payload.items()
+                if key not in query_params and key not in normalized_body
+            }
+        )
         kwargs["data"] = FormData(request_body)()
 
         return args
