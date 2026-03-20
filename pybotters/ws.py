@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 import aiohttp
 
 from .auth import Auth as _Auth
+from .helpers import lighter
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -251,6 +252,7 @@ class WebSocketApp:
         hdlr_json: list[WsJsonHandler],
     ) -> None:
         hdlr: WsStrHandler | WsJsonHandler | WsJsonHandler
+        json_data: Any = None
         if msg.type == aiohttp.WSMsgType.TEXT:
             for hdlr in hdlr_str:
                 self._loop.call_soon(hdlr, msg.data, ws)
@@ -258,15 +260,24 @@ class WebSocketApp:
             for hdlr in hdlr_bytes:
                 self._loop.call_soon(hdlr, msg.data, ws)
 
-        if hdlr_json and msg.type in {aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY}:
+        if msg.type in {aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY} and (
+            hdlr_json or ws._response.url.host in lighter.HOSTS
+        ):
             try:
-                data = msg.json()
+                json_data = msg.json()
             except json.JSONDecodeError as e:
                 if msg.data not in {"ping", "pong"}:
                     logger.warning(f"{pretty_modulename(e)}: {e} {e.doc}")
             else:
                 for hdlr in hdlr_json:
-                    self._loop.call_soon(hdlr, data, ws)
+                    self._loop.call_soon(hdlr, json_data, ws)
+
+        if (
+            isinstance(json_data, dict)
+            and json_data.get("type") == "ping"
+            and ws._response.url.host in lighter.HOSTS
+        ):
+            self._loop.create_task(ws.send_json({"type": "pong"}, auth=None))
 
         if msg.type == aiohttp.WSMsgType.PING and self._autoping:
             self._loop.create_task(ws.pong(msg.data))
@@ -430,6 +441,12 @@ class Heartbeat:
         while not ws.closed:
             await ws.send_str('{"method":"ping"}')
             await asyncio.sleep(30.0)
+
+    @staticmethod
+    async def lighter(ws: ClientWebSocketResponse):
+        while not ws.closed:
+            await ws.ping()
+            await asyncio.sleep(60.0)
 
 
 class Auth:
@@ -795,6 +812,8 @@ class HeartbeatHosts:
         "api-cloud.bittrade.co.jp": Heartbeat.bittrade,
         "api.hyperliquid.xyz": Heartbeat.hyperliquid,
         "api.hyperliquid-testnet.xyz": Heartbeat.hyperliquid,
+        "mainnet.zklighter.elliot.ai": Heartbeat.lighter,
+        "testnet.zklighter.elliot.ai": Heartbeat.lighter,
     }
 
 
@@ -971,6 +990,25 @@ class MessageSign:
 
         _Auth._hyperliquid(payload, url, private_key)
 
+    @staticmethod
+    def lighter(ws: ClientWebSocketResponse, data: object) -> None:
+        if not isinstance(data, dict):
+            return
+
+        if data.get("type") != "subscribe" or "auth" in data:
+            return
+
+        channel = data.get("channel")
+        if not isinstance(channel, str) or not lighter.is_protected_channel(channel):
+            return
+
+        url = ws._response.url
+        api_name = MessageSignHosts.items[url.host].name
+        if not isinstance(api_name, str):
+            raise TypeError("Lighter auth requires a static API name")
+
+        data["auth"] = lighter.get_auth_token(ws._response._session, api_name, url.host)
+
 
 class MessageSignHosts:
     # NOTE: yarl.URL.host is also allowed to be None. So, for brevity, relax the type check on the `items` key.
@@ -984,4 +1022,6 @@ class MessageSignHosts:
         "api.hyperliquid-testnet.xyz": Item(
             "hyperliquid_testnet", MessageSign.hyperliquid
         ),
+        "mainnet.zklighter.elliot.ai": Item("lighter", MessageSign.lighter),
+        "testnet.zklighter.elliot.ai": Item("lighter_testnet", MessageSign.lighter),
     }

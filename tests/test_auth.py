@@ -14,6 +14,7 @@ from yarl import URL
 
 import pybotters.auth
 import pybotters.helpers.aster
+import pybotters.helpers.lighter
 
 
 def _freeze_aster_v3_signature_inputs(
@@ -140,6 +141,8 @@ def mock_session(mocker: pytest_mock.MockerFixture):
         "hyperliquid_testnet": (
             "0x0123456789012345678901234567890123456789012345678901234567890123",
         ),
+        "lighter": ("mainnet-auth-token",),
+        "lighter_testnet": ("testnet-auth-token",),
     }
     assert set(apis.keys()) == set(
         item.name if isinstance(item.name, str) else item.name.__name__
@@ -2041,3 +2044,122 @@ def test_hyperliquid(mock_session, test_input, expected):
         kwargs["data"] = json.loads(kwargs["data"].decode())
 
     assert {"args": args, "kwargs": kwargs} == expected
+
+
+def test_lighter_with_auth_token(mock_session):
+    args = ("GET", URL("https://mainnet.zklighter.elliot.ai/api/v1/accountMetadata"))
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.lighter(args, kwargs)
+
+    assert actual_args == args
+    assert kwargs["headers"] == CIMultiDict({"Authorization": "mainnet-auth-token"})
+
+
+def test_lighter_helper_with_direct_token(mocker: pytest_mock.MockerFixture):
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {
+        "lighter": ("mainnet-auth-token", b"", ""),
+    }
+
+    actual = pybotters.helpers.lighter.get_auth_token(
+        session,
+        "lighter",
+        "mainnet.zklighter.elliot.ai",
+    )
+
+    assert actual == "mainnet-auth-token"
+
+
+def test_lighter_helper_with_sdk_cache(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {
+        "lighter": ("12", b"7", "0xabc"),
+    }
+    signer_client = mocker.MagicMock()
+    signer_client.create_auth_token_with_expiry.return_value = ("sdk-auth-token", None)
+    lighter_sdk = mocker.MagicMock()
+    lighter_sdk.SignerClient.return_value = signer_client
+    mocker.patch(
+        "pybotters.helpers.lighter.importlib.import_module",
+        return_value=lighter_sdk,
+    )
+    mocker.patch("time.time", return_value=1000.0)
+
+    actual = pybotters.helpers.lighter.get_auth_token(
+        session,
+        "lighter",
+        "mainnet.zklighter.elliot.ai",
+    )
+    cached = pybotters.helpers.lighter.get_auth_token(
+        session,
+        "lighter",
+        "mainnet.zklighter.elliot.ai",
+    )
+
+    assert actual == "sdk-auth-token"
+    assert cached == "sdk-auth-token"
+    lighter_sdk.SignerClient.assert_called_once_with(
+        url="https://mainnet.zklighter.elliot.ai",
+        account_index=12,
+        api_private_keys={7: "0xabc"},
+    )
+    signer_client.create_auth_token_with_expiry.assert_called_once_with(
+        deadline=600,
+        api_key_index=7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_lighter_close_sdk_clients(mocker: pytest_mock.MockerFixture) -> None:
+    session = mocker.MagicMock()
+    signer_client = mocker.AsyncMock()
+    session.__dict__["_lighter_sdk_clients"] = {
+        ("lighter", "mainnet.zklighter.elliot.ai"): signer_client,
+    }
+
+    await pybotters.helpers.lighter.close_sdk_clients(session)
+
+    signer_client.close.assert_called_once_with()
+
+
+def test_lighter_with_sdk_token(mock_session, mocker: pytest_mock.MockerFixture):
+    mock_session.__dict__["_apis"]["lighter"] = ("12", b"7", "0xabc")
+    getter = mocker.patch(
+        "pybotters.helpers.lighter.get_auth_token",
+        return_value="generated-auth-token",
+    )
+    args = ("GET", URL("https://mainnet.zklighter.elliot.ai/api/v1/accountMetadata"))
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.lighter(args, kwargs)
+
+    assert actual_args == args
+    getter.assert_called_once_with(
+        mock_session, "lighter", "mainnet.zklighter.elliot.ai"
+    )
+    assert kwargs["headers"] == CIMultiDict({"Authorization": "generated-auth-token"})
+
+
+def test_lighter_skip_websocket_upgrade(mock_session):
+    args = ("GET", URL("wss://mainnet.zklighter.elliot.ai/stream"))
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict({"Upgrade": "websocket"}),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.lighter(args, kwargs)
+
+    assert actual_args == args
+    assert kwargs["headers"] == CIMultiDict({"Upgrade": "websocket"})
