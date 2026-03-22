@@ -40,6 +40,96 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_KUCOIN_REFRESH_AFTER = 23 * 60 * 60
+
+
+def _normalize_seconds(value: int | float | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    # KuCoin returns milliseconds; treat large values as ms.
+    if val > 1000:
+        return val / 1000.0
+    return val
+
+
+def register_kucoin_ws(
+    session: aiohttp.ClientSession,
+    host: str | None,
+    api_base: str,
+    path: str,
+    ping_interval: int | float | None,
+    ping_timeout: int | float | None,
+    auth_required: bool,
+) -> None:
+    if not host:
+        return
+    store = session.__dict__.setdefault("_kucoin_ws", {})
+    store[host] = {
+        "api_base": api_base,
+        "path": path,
+        "ping_interval": _normalize_seconds(ping_interval, 15.0),
+        "ping_timeout": _normalize_seconds(ping_timeout, 10.0),
+        "auth_required": auth_required,
+        "last_refresh": time.monotonic(),
+        "refresh_after": _KUCOIN_REFRESH_AFTER,
+    }
+
+
+def _get_kucoin_ws_info(
+    session: aiohttp.ClientSession, host: str | None
+) -> dict[str, Any] | None:
+    if not host:
+        return None
+    return session.__dict__.get("_kucoin_ws", {}).get(host)
+
+
+async def _fetch_kucoin_bullet(
+    session: aiohttp.ClientSession,
+    api_base: str,
+    path: str,
+    auth_required: bool,
+) -> dict[str, Any]:
+    auth = _Auth if auth_required else None
+    async with session.post(f"{api_base}{path}", auth=auth) as resp:
+        data = await resp.json()
+        if resp.status != 200:
+            raise RuntimeError(f"KuCoin bullet HTTP {resp.status}: {data}")
+        if not isinstance(data, dict) or "data" not in data:
+            raise RuntimeError(f"KuCoin bullet invalid response: {data}")
+        return data["data"]
+
+
+def _build_kucoin_endpoint(
+    data: dict[str, Any], preferred_host: str | None = None
+) -> tuple[str, str | None, int | float | None, int | float | None]:
+    token = data["token"]
+    servers = data["instanceServers"]
+    selected = None
+    if preferred_host:
+        for s in servers:
+            host = aiohttp.typedefs.URL(s["endpoint"]).host
+            if host == preferred_host:
+                selected = s
+                break
+    if selected is None:
+        selected = servers[0]
+    endpoint = selected["endpoint"]
+    host = aiohttp.typedefs.URL(endpoint).host
+    ping_interval = selected.get("pingInterval", data.get("pingInterval"))
+    ping_timeout = selected.get("pingTimeout", data.get("pingTimeout"))
+    connect_id = str(uuid.uuid4())
+    return (
+        f"{endpoint}?token={token}&acceptUserMessage=true&connectId={connect_id}",
+        host,
+        ping_interval,
+        ping_timeout,
+    )
+
+
 def pretty_modulename(e: Exception) -> str:
     modulename = e.__class__.__name__
     module = inspect.getmodule(e)
@@ -195,6 +285,41 @@ class WebSocketApp:
                 self._current_ws = None
                 self._event.clear()
 
+    async def _maybe_refresh_kucoin_endpoint(self) -> None:
+        try:
+            url = aiohttp.typedefs.URL(self._url)
+            info = _get_kucoin_ws_info(self._session, url.host)
+            if not info:
+                return
+            now = time.monotonic()
+            refresh_after = info.get("refresh_after", _KUCOIN_REFRESH_AFTER)
+            last_refresh = info.get("last_refresh", 0.0)
+            if now - last_refresh < refresh_after:
+                return
+            data = await _fetch_kucoin_bullet(
+                self._session,
+                info["api_base"],
+                info["path"],
+                info.get("auth_required", False),
+            )
+            ws_url, host, ping_interval, ping_timeout = _build_kucoin_endpoint(
+                data, preferred_host=url.host
+            )
+            self._url = ws_url
+            info["last_refresh"] = now
+            info["ping_interval"] = _normalize_seconds(
+                ping_interval, info.get("ping_interval", 15.0)
+            )
+            info["ping_timeout"] = _normalize_seconds(
+                ping_timeout, info.get("ping_timeout", 10.0)
+            )
+            if host and host != url.host:
+                store = self._session.__dict__.setdefault("_kucoin_ws", {})
+                store.pop(url.host, None)
+                store[host] = info
+        except Exception as e:
+            logger.warning(f"{pretty_modulename(e)}: {e}")
+
     async def _ws_connect(
         self,
         *,
@@ -206,6 +331,7 @@ class WebSocketApp:
         hdlr_json: list[WsJsonHandler],
         **kwargs: Any,
     ) -> None:
+        await self._maybe_refresh_kucoin_endpoint()
         async with self._session.ws_connect(self._url, autoping=False, **kwargs) as ws:
             ws = cast("ClientWebSocketResponse", ws)
             self._current_ws = ws
@@ -396,7 +522,11 @@ class Heartbeat:
     async def kucoin(ws: ClientWebSocketResponse):
         while not ws.closed:
             await ws.send_str(f'{{"id": "{uuid.uuid4()}", "type": "ping"}}')
-            await asyncio.sleep(15)
+            interval = 15.0
+            info = _get_kucoin_ws_info(ws._response._session, ws._response.url.host)
+            if info:
+                interval = info.get("ping_interval", interval)
+            await asyncio.sleep(interval)
 
     @staticmethod
     async def okj(ws: ClientWebSocketResponse):
