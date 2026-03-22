@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
 import aiohttp
+import contextlib
 
 from .auth import Auth as _Auth
 
@@ -237,10 +238,31 @@ class WebSocketApp:
         hdlr_bytes: list[WsBytesHandler],
         hdlr_json: list[WsJsonHandler],
     ) -> None:
-        async for msg in ws:
-            self._loop.call_soon(
-                self._onmessage, msg, ws, hdlr_str, hdlr_bytes, hdlr_json
-            )
+        reconnect_task = asyncio.create_task(self._kucoin_reconnect_timer(ws))
+        try:
+            async for msg in ws:
+                self._loop.call_soon(
+                    self._onmessage, msg, ws, hdlr_str, hdlr_bytes, hdlr_json
+                )
+        finally:
+            reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reconnect_task
+
+    async def _kucoin_reconnect_timer(self, ws: ClientWebSocketResponse) -> None:
+        info = _get_kucoin_ws_info(self._session, ws._response.url.host)
+        if not info:
+            return
+        refresh_after = info.get("refresh_after", _KUCOIN_REFRESH_AFTER)
+        # reconnect a bit before token expiry
+        delay = max(1.0, refresh_after - 60.0)
+        try:
+            await asyncio.sleep(delay)
+            await ws.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("KuCoin proactive reconnect failed: %s", e)
 
     def _onmessage(
         self,
