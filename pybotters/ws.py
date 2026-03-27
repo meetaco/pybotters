@@ -1007,11 +1007,11 @@ class MessageSign:
         if not isinstance(api_name, str):
             raise TypeError("Lighter auth requires a static API name")
 
-        session = ws._response._session
-        if session is None:
-            raise RuntimeError("Lighter auth requires an active client session")
-
-        data["auth"] = lighter.get_auth_token(session, api_name, url.host)
+        data["auth"] = lighter.get_auth_token(
+            ws._response._session,  # type: ignore[arg-type]
+            api_name,
+            url.host,
+        )
 
 
 class MessageSignHosts:

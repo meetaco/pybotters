@@ -2196,3 +2196,19 @@ def test_msgsign_hyperliquid_ignore(test_input):
     pybotters.ws.MessageSignHosts.items[url.host].func(m_wsresp, test_input)
 
     assert test_input == expected
+
+
+def test_msgsign_lighter_static_api_name_error(mocker: pytest_mock.MockerFixture):
+    # ws.py line 1008: api_name is not a str
+    item = mocker.MagicMock()
+    item.name = lambda: "lighter"  # callable, not str
+    mocker.patch.dict(
+        pybotters.ws.MessageSignHosts.items,
+        {"mainnet.zklighter.elliot.ai": item},
+    )
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    data = {"type": "subscribe", "channel": "account_all_orders/12"}
+
+    with pytest.raises(TypeError, match="static API name"):
+        pybotters.ws.MessageSign.lighter(m_wsresp, data)

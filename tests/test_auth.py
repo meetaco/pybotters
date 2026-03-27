@@ -2163,3 +2163,144 @@ def test_lighter_skip_websocket_upgrade(mock_session):
 
     assert actual_args == args
     assert kwargs["headers"] == CIMultiDict({"Upgrade": "websocket"})
+
+
+def test_lighter_skip_already_authorized(mock_session):
+    # auth.py line 614: Authorization header already present
+    args = ("GET", URL("https://mainnet.zklighter.elliot.ai/api/v1/accountMetadata"))
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict({"Authorization": "existing-token"}),
+        "session": mock_session,
+    }
+
+    actual_args = pybotters.auth.Auth.lighter(args, kwargs)
+
+    assert actual_args == args
+    assert kwargs["headers"] == CIMultiDict({"Authorization": "existing-token"})
+
+
+def test_lighter_helper_coerce_str_bytes(mocker: pytest_mock.MockerFixture):
+    # Line 51: _coerce_str bytes branch
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {
+        "lighter": (b"mainnet-auth-token",),
+    }
+
+    actual = pybotters.helpers.lighter.get_auth_token(
+        session, "lighter", "mainnet.zklighter.elliot.ai"
+    )
+
+    assert actual == "mainnet-auth-token"
+
+
+def test_lighter_helper_unsupported_host(mocker: pytest_mock.MockerFixture):
+    # Line 63: _base_url_from_host raises on unknown host
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {
+        "lighter": ("12", b"7", "0xabc"),
+    }
+    signer_client = mocker.MagicMock()
+    signer_client.create_auth_token_with_expiry.return_value = ("tok", None)
+    lighter_sdk = mocker.MagicMock()
+    lighter_sdk.SignerClient.return_value = signer_client
+    mocker.patch(
+        "pybotters.helpers.lighter.importlib.import_module",
+        return_value=lighter_sdk,
+    )
+
+    with pytest.raises(pybotters.helpers.lighter.LighterAuthError, match="Unsupported"):
+        pybotters.helpers.lighter.get_auth_token(
+            session, "lighter", "unknown.host.example"
+        )
+
+
+def test_lighter_helper_sdk_import_error(mocker: pytest_mock.MockerFixture):
+    # Lines 74-75: ImportError in _build_signer_client
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {
+        "lighter": ("12", b"7", "0xabc"),
+    }
+    mocker.patch(
+        "pybotters.helpers.lighter.importlib.import_module",
+        side_effect=ImportError("no module named lighter"),
+    )
+
+    with pytest.raises(pybotters.helpers.lighter.LighterAuthError, match="lighter-sdk"):
+        pybotters.helpers.lighter.get_auth_token(
+            session, "lighter", "mainnet.zklighter.elliot.ai"
+        )
+
+
+def test_lighter_helper_sdk_token_error(mocker: pytest_mock.MockerFixture):
+    # Line 127: create_auth_token_with_expiry returns an error
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {"lighter": ("12", b"7", "0xabc")}
+    signer_client = mocker.MagicMock()
+    signer_client.create_auth_token_with_expiry.return_value = (None, "signing failed")
+    lighter_sdk = mocker.MagicMock()
+    lighter_sdk.SignerClient.return_value = signer_client
+    mocker.patch(
+        "pybotters.helpers.lighter.importlib.import_module",
+        return_value=lighter_sdk,
+    )
+
+    with pytest.raises(
+        pybotters.helpers.lighter.LighterAuthError, match="signing failed"
+    ):
+        pybotters.helpers.lighter.get_auth_token(
+            session, "lighter", "mainnet.zklighter.elliot.ai"
+        )
+
+
+def test_lighter_helper_sdk_empty_token(mocker: pytest_mock.MockerFixture):
+    # Line 129: create_auth_token_with_expiry returns empty token
+    session = mocker.MagicMock()
+    session.__dict__["_apis"] = {"lighter": ("12", b"7", "0xabc")}
+    signer_client = mocker.MagicMock()
+    signer_client.create_auth_token_with_expiry.return_value = ("", None)
+    lighter_sdk = mocker.MagicMock()
+    lighter_sdk.SignerClient.return_value = signer_client
+    mocker.patch(
+        "pybotters.helpers.lighter.importlib.import_module",
+        return_value=lighter_sdk,
+    )
+
+    with pytest.raises(pybotters.helpers.lighter.LighterAuthError, match="empty token"):
+        pybotters.helpers.lighter.get_auth_token(
+            session, "lighter", "mainnet.zklighter.elliot.ai"
+        )
+
+
+@pytest.mark.asyncio
+async def test_lighter_close_sdk_clients_no_close(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Line 147: client without a close method is skipped
+    session = mocker.MagicMock()
+    client_without_close = object()
+    session.__dict__["_lighter_sdk_clients"] = {
+        ("lighter", "mainnet.zklighter.elliot.ai"): client_without_close,
+    }
+
+    # Should not raise
+    await pybotters.helpers.lighter.close_sdk_clients(session)
+
+
+def test_lighter_auth_static_api_name_error(
+    mock_session, mocker: pytest_mock.MockerFixture
+):
+    # auth.py line 619: api_name is not a str
+    item = mocker.MagicMock()
+    item.name = lambda: "lighter"  # callable, not str
+    mocker.patch.dict(pybotters.auth.Hosts.items, {"mainnet.zklighter.elliot.ai": item})
+
+    args = ("GET", URL("https://mainnet.zklighter.elliot.ai/api/v1/accountMetadata"))
+    kwargs = {
+        "data": None,
+        "headers": CIMultiDict(),
+        "session": mock_session,
+    }
+
+    with pytest.raises(TypeError, match="static API name"):
+        pybotters.auth.Auth.lighter(args, kwargs)
