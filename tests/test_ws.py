@@ -856,17 +856,17 @@ async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):
 
 @pytest.mark.asyncio
 async def test_onmessage_lighter_ping(
-    mocker: pytest_mock.MockerFixture, websocketapp: WebSocketApp
+    websocketapp: WebSocketApp,
 ):
-    m_create_task = mocker.patch.object(websocketapp._loop, "create_task")
     ws = AsyncMock()
     ws._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
     msg = aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, '{"type":"ping"}', None)
 
     websocketapp._onmessage(msg, ws, [], [], [])
 
-    assert m_create_task.called
-    await m_create_task.call_args.args[0]
+    # send_json coroutine is created (and the call recorded) at the point
+    # create_task is invoked inside _onmessage, so the assertion is valid
+    # without awaiting the task.
     ws.send_json.assert_called_once_with({"type": "pong"}, auth=None)
 
 
