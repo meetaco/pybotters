@@ -2337,9 +2337,12 @@ def test_lighter_account_all_positions() -> None:
     assert store.account_all_positions.find() == [
         {"account_index": 12, "market_id": 0, "size": "1.5", "entry_price": "100"},
     ]
-    assert store.account_all_positions.get(
-        {"account_index": 12, "market_id": 0}
-    ) == {"account_index": 12, "market_id": 0, "size": "1.5", "entry_price": "100"}
+    assert store.account_all_positions.get({"account_index": 12, "market_id": 0}) == {
+        "account_index": 12,
+        "market_id": 0,
+        "size": "1.5",
+        "entry_price": "100",
+    }
 
 
 def test_lighter_account_all_assets() -> None:
@@ -2378,9 +2381,11 @@ def test_lighter_account_all_assets() -> None:
     assert store.account_all_assets.find() == [
         {"account_index": 12, "asset_id": 0, "balance": "150"},
     ]
-    assert store.account_all_assets.get(
-        {"account_index": 12, "asset_id": 0}
-    ) == {"account_index": 12, "asset_id": 0, "balance": "150"}
+    assert store.account_all_assets.get({"account_index": 12, "asset_id": 0}) == {
+        "account_index": 12,
+        "asset_id": 0,
+        "balance": "150",
+    }
 
 
 def test_lighter_account_spot_avg_entry_prices() -> None:
@@ -2453,9 +2458,10 @@ def test_lighter_account_spot_avg_entry_prices() -> None:
         "last_trade_id": 7,
     }
     # asset_id 1 is still present (incremental)
-    assert store.account_spot_avg_entry_prices.get(
-        {"account_index": 12, "asset_id": 1}
-    ) is not None
+    assert (
+        store.account_spot_avg_entry_prices.get({"account_index": 12, "asset_id": 1})
+        is not None
+    )
 
 
 def test_lighter_notification() -> None:
