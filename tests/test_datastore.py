@@ -2210,35 +2210,252 @@ def test_lighter_ticker_and_trades() -> None:
     ]
 
 
-def test_lighter_account_snapshot_merge() -> None:
+def test_lighter_account_all_orders() -> None:
+    store = pybotters.LighterDataStore()
+    ws: Any = object()
+
+    # snapshot: orders keyed by market_id string
+    store.onmessage(
+        {
+            "type": "subscribed/account_all_orders",
+            "channel": "account_all_orders:12",
+            "orders": {
+                "0": [{"order_index": 1, "price": "100"}],
+                "1": [{"order_index": 2, "price": "200"}],
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_orders.find() == [
+        {"account_index": 12, "market_id": 0, "order_index": 1, "price": "100"},
+        {"account_index": 12, "market_id": 1, "order_index": 2, "price": "200"},
+    ]
+
+    # update: full replacement — previous orders are cleared
+    store.onmessage(
+        {
+            "type": "update/account_all_orders",
+            "channel": "account_all_orders:12",
+            "orders": {
+                "0": [{"order_index": 3, "price": "150"}],
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_orders.find() == [
+        {"account_index": 12, "market_id": 0, "order_index": 3, "price": "150"},
+    ]
+    assert store.account_all_orders.get(
+        {"account_index": 12, "market_id": 0, "order_index": 3}
+    ) == {"account_index": 12, "market_id": 0, "order_index": 3, "price": "150"}
+
+
+def test_lighter_account_all_trades() -> None:
+    store = pybotters.LighterDataStore()
+    ws: Any = object()
+
+    # initial subscription may send an empty list
+    store.onmessage(
+        {
+            "type": "subscribed/account_all_trades",
+            "channel": "account_all_trades:12",
+            "trades": [],
+            "total_volume": "0",
+        },
+        ws,
+    )
+    assert store.account_all_trades.find() == []
+
+    # incremental update: new trades per market
+    store.onmessage(
+        {
+            "type": "update/account_all_trades",
+            "channel": "account_all_trades:12",
+            "trades": {
+                "0": [{"trade_id": 10, "price": "100"}],
+                "1": [{"trade_id": 11, "price": "200"}],
+            },
+        },
+        ws,
+    )
+    store.onmessage(
+        {
+            "type": "update/account_all_trades",
+            "channel": "account_all_trades:12",
+            "trades": {
+                "0": [{"trade_id": 12, "price": "105"}],
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_trades.find() == [
+        {"account_index": 12, "market_id": 0, "trade_id": 10, "price": "100"},
+        {"account_index": 12, "market_id": 1, "trade_id": 11, "price": "200"},
+        {"account_index": 12, "market_id": 0, "trade_id": 12, "price": "105"},
+    ]
+    assert store.account_all_trades.get(
+        {"account_index": 12, "market_id": 0, "trade_id": 10}
+    ) == {"account_index": 12, "market_id": 0, "trade_id": 10, "price": "100"}
+
+
+def test_lighter_account_all_positions() -> None:
     store = pybotters.LighterDataStore()
     ws: Any = object()
 
     store.onmessage(
         {
-            "type": "subscribed/account_all_orders",
-            "channel": "account_all_orders:12",
-            "volume": "10.0",
-            "orders": [{"order_index": 1}],
-        },
-        ws,
-    )
-    store.onmessage(
-        {
-            "type": "update/account_all_orders",
-            "channel": "account_all_orders:12",
-            "orders": [{"order_index": 2}],
+            "type": "subscribed/account_all_positions",
+            "channel": "account_all_positions:12",
+            "positions": {
+                "0": {"size": "1.0", "entry_price": "100"},
+                "1": {"size": "2.0", "entry_price": "200"},
+            },
         },
         ws,
     )
 
-    assert store.account_all_orders.get({"account_index": 12}) == {
-        "type": "update/account_all_orders",
-        "channel": "account_all_orders:12",
-        "volume": "10.0",
-        "orders": [{"order_index": 2}],
+    assert store.account_all_positions.find() == [
+        {"account_index": 12, "market_id": 0, "size": "1.0", "entry_price": "100"},
+        {"account_index": 12, "market_id": 1, "size": "2.0", "entry_price": "200"},
+    ]
+
+    # full replacement
+    store.onmessage(
+        {
+            "type": "update/account_all_positions",
+            "channel": "account_all_positions:12",
+            "positions": {
+                "0": {"size": "1.5", "entry_price": "100"},
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_positions.find() == [
+        {"account_index": 12, "market_id": 0, "size": "1.5", "entry_price": "100"},
+    ]
+    assert store.account_all_positions.get(
+        {"account_index": 12, "market_id": 0}
+    ) == {"account_index": 12, "market_id": 0, "size": "1.5", "entry_price": "100"}
+
+
+def test_lighter_account_all_assets() -> None:
+    store = pybotters.LighterDataStore()
+    ws: Any = object()
+
+    store.onmessage(
+        {
+            "type": "subscribed/account_all_assets",
+            "channel": "account_all_assets:12",
+            "assets": {
+                "0": {"asset_id": 0, "balance": "100"},
+                "1": {"asset_id": 1, "balance": "200"},
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_assets.find() == [
+        {"account_index": 12, "asset_id": 0, "balance": "100"},
+        {"account_index": 12, "asset_id": 1, "balance": "200"},
+    ]
+
+    # full replacement
+    store.onmessage(
+        {
+            "type": "update/account_all_assets",
+            "channel": "account_all_assets:12",
+            "assets": {
+                "0": {"asset_id": 0, "balance": "150"},
+            },
+        },
+        ws,
+    )
+
+    assert store.account_all_assets.find() == [
+        {"account_index": 12, "asset_id": 0, "balance": "150"},
+    ]
+    assert store.account_all_assets.get(
+        {"account_index": 12, "asset_id": 0}
+    ) == {"account_index": 12, "asset_id": 0, "balance": "150"}
+
+
+def test_lighter_account_spot_avg_entry_prices() -> None:
+    store = pybotters.LighterDataStore()
+    ws: Any = object()
+
+    store.onmessage(
+        {
+            "type": "subscribed/account_spot_avg_entry_prices",
+            "channel": "account_spot_avg_entry_prices:12",
+            "avg_entry_prices": {
+                "0": {
+                    "asset_id": 0,
+                    "avg_entry_price": "100",
+                    "asset_size": "1.0",
+                    "last_trade_id": 5,
+                },
+                "1": {
+                    "asset_id": 1,
+                    "avg_entry_price": "200",
+                    "asset_size": "2.0",
+                    "last_trade_id": 6,
+                },
+            },
+        },
+        ws,
+    )
+
+    assert store.account_spot_avg_entry_prices.find() == [
+        {
+            "account_index": 12,
+            "asset_id": 0,
+            "avg_entry_price": "100",
+            "asset_size": "1.0",
+            "last_trade_id": 5,
+        },
+        {
+            "account_index": 12,
+            "asset_id": 1,
+            "avg_entry_price": "200",
+            "asset_size": "2.0",
+            "last_trade_id": 6,
+        },
+    ]
+
+    # incremental update
+    store.onmessage(
+        {
+            "type": "update/account_spot_avg_entry_prices",
+            "channel": "account_spot_avg_entry_prices:12",
+            "avg_entry_prices": {
+                "0": {
+                    "asset_id": 0,
+                    "avg_entry_price": "110",
+                    "asset_size": "1.5",
+                    "last_trade_id": 7,
+                },
+            },
+        },
+        ws,
+    )
+
+    assert store.account_spot_avg_entry_prices.get(
+        {"account_index": 12, "asset_id": 0}
+    ) == {
         "account_index": 12,
+        "asset_id": 0,
+        "avg_entry_price": "110",
+        "asset_size": "1.5",
+        "last_trade_id": 7,
     }
+    # asset_id 1 is still present (incremental)
+    assert store.account_spot_avg_entry_prices.get(
+        {"account_index": 12, "asset_id": 1}
+    ) is not None
 
 
 def test_lighter_notification() -> None:

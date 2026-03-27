@@ -306,12 +306,12 @@ class MarketStats(DataStore):
                 items.append(item)
         else:
             item = dict(payload)
-            market_id = cast("int | None", payload.get("market_id"))
-            if market_id is None:
-                market_id = _channel_int(channel)
-            if market_id is None:
+            market_id_val = cast("int | None", payload.get("market_id"))
+            if market_id_val is None:
+                market_id_val = _channel_int(channel)
+            if market_id_val is None:
                 return
-            item["market_id"] = market_id
+            item["market_id"] = market_id_val
             item["channel"] = channel
             item["timestamp"] = msg.get("timestamp")
             items.append(item)
@@ -338,12 +338,12 @@ class SpotMarketStats(DataStore):
                 items.append(item)
         else:
             item = dict(payload)
-            market_id = cast("int | None", payload.get("market_id"))
-            if market_id is None:
-                market_id = _channel_int(channel)
-            if market_id is None:
+            market_id_val = cast("int | None", payload.get("market_id"))
+            if market_id_val is None:
+                market_id_val = _channel_int(channel)
+            if market_id_val is None:
                 return
-            item["market_id"] = market_id
+            item["market_id"] = market_id_val
             item["channel"] = channel
             item["timestamp"] = msg.get("timestamp")
             items.append(item)
@@ -428,15 +428,32 @@ class AccountTx(DataStore):
 
 
 class AccountAllOrders(DataStore):
-    _KEYS = ["account_index"]
+    _KEYS = ["account_index", "market_id", "order_index"]
 
     def _onmessage(self, msg: Item) -> None:
-        item = dict(msg)
         account_index = _channel_int(cast("str", msg["channel"]))
         if account_index is None:
             return
-        item["account_index"] = account_index
-        self._update([item])
+
+        orders_by_market = msg.get("orders", {})
+        if not isinstance(orders_by_market, dict):
+            return
+
+        # Full replacement: each message contains the complete current state
+        self._find_and_delete({"account_index": account_index})
+
+        items: list[Item] = []
+        for market_id_str, orders in cast(
+            "dict[str, list[dict[str, Any]]]", orders_by_market
+        ).items():
+            market_id = int(market_id_str)
+            for order in orders:
+                item = dict(order)
+                item["account_index"] = account_index
+                item["market_id"] = market_id
+                items.append(item)
+
+        self._update(items)
 
 
 class Height(DataStore):
@@ -506,48 +523,105 @@ class AccountOrders(DataStore):
 
 
 class AccountAllTrades(DataStore):
-    _KEYS = ["account_index"]
+    _KEYS = ["account_index", "market_id", "trade_id"]
+    _MAXLEN = 99999
 
     def _onmessage(self, msg: Item) -> None:
-        item = dict(msg)
         account_index = _channel_int(cast("str", msg["channel"]))
         if account_index is None:
             return
-        item["account_index"] = account_index
-        self._update([item])
+
+        trades_by_market = msg.get("trades", {})
+        if not isinstance(trades_by_market, dict):
+            return  # initial subscription may send an empty list
+
+        items: list[Item] = []
+        for market_id_str, trades in cast(
+            "dict[str, list[dict[str, Any]]]", trades_by_market
+        ).items():
+            market_id = int(market_id_str)
+            for trade in trades:
+                item = dict(trade)
+                item["account_index"] = account_index
+                item["market_id"] = market_id
+                items.append(item)
+
+        self._insert(items)
 
 
 class AccountAllPositions(DataStore):
-    _KEYS = ["account_index"]
+    _KEYS = ["account_index", "market_id"]
 
     def _onmessage(self, msg: Item) -> None:
-        item = dict(msg)
         account_index = _channel_int(cast("str", msg["channel"]))
         if account_index is None:
             return
-        item["account_index"] = account_index
-        self._update([item])
+
+        positions_by_market = msg.get("positions", {})
+        if not isinstance(positions_by_market, dict):
+            return
+
+        # Full replacement: each message contains the complete current state
+        self._find_and_delete({"account_index": account_index})
+
+        items: list[Item] = []
+        for market_id_str, position in cast(
+            "dict[str, dict[str, Any]]", positions_by_market
+        ).items():
+            item = dict(position)
+            item["account_index"] = account_index
+            item["market_id"] = int(market_id_str)
+            items.append(item)
+
+        self._update(items)
 
 
 class AccountAllAssets(DataStore):
-    _KEYS = ["account_index"]
+    _KEYS = ["account_index", "asset_id"]
 
     def _onmessage(self, msg: Item) -> None:
-        item = dict(msg)
         account_index = _channel_int(cast("str", msg["channel"]))
         if account_index is None:
             return
-        item["account_index"] = account_index
-        self._update([item])
+
+        assets_by_index = msg.get("assets", {})
+        if not isinstance(assets_by_index, dict):
+            return
+
+        # Full replacement: each message contains the complete current state
+        self._find_and_delete({"account_index": account_index})
+
+        items: list[Item] = []
+        for asset_index_str, asset in cast(
+            "dict[str, dict[str, Any]]", assets_by_index
+        ).items():
+            item = dict(asset)
+            item["account_index"] = account_index
+            item.setdefault("asset_id", int(asset_index_str))
+            items.append(item)
+
+        self._update(items)
 
 
 class AccountSpotAvgEntryPrices(DataStore):
-    _KEYS = ["account_index"]
+    _KEYS = ["account_index", "asset_id"]
 
     def _onmessage(self, msg: Item) -> None:
-        item = dict(msg)
         account_index = _channel_int(cast("str", msg["channel"]))
         if account_index is None:
             return
-        item["account_index"] = account_index
-        self._update([item])
+
+        prices_by_index = msg.get("avg_entry_prices", {})
+        if not isinstance(prices_by_index, dict):
+            return
+
+        items: list[Item] = []
+        for asset_index_str, price_data in cast(
+            "dict[str, dict[str, Any]]", prices_by_index
+        ).items():
+            item = dict(price_data)
+            item["account_index"] = account_index
+            item.setdefault("asset_id", int(asset_index_str))
+            items.append(item)
+
+        self._update(items)
