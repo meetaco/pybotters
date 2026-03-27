@@ -15,7 +15,7 @@ from aiohttp.payload import JsonPayload
 from multidict import CIMultiDict, MultiDict
 from yarl import URL
 
-from pybotters.helpers import aster, hyperliquid
+from pybotters.helpers import aster, hyperliquid, lighter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -608,6 +608,27 @@ class Auth:
 
         return args
 
+    @staticmethod
+    def lighter(args: tuple[str, URL], kwargs: dict[str, Any]) -> tuple[str, URL]:
+        url: URL = args[1]
+        headers: CIMultiDict = kwargs["headers"]
+
+        # Private WebSocket channels are authenticated per subscribe message.
+        if headers.get("Upgrade") == "websocket":
+            return args
+
+        if "Authorization" in headers or "auth" in url.query:
+            return args
+
+        session: aiohttp.ClientSession = kwargs["session"]
+        api_name = Hosts.items[url.host].name
+        if not isinstance(api_name, str):
+            raise TypeError("Lighter auth requires a static API name")
+
+        headers["Authorization"] = lighter.get_auth_token(session, api_name, url.host)
+
+        return args
+
 
 @dataclass
 class Item:
@@ -666,6 +687,8 @@ class Hosts:
         "api-cloud.bittrade.co.jp": Item("bittrade", Auth.bittrade),
         "api.hyperliquid.xyz": Item("hyperliquid", Auth.hyperliquid),
         "api.hyperliquid-testnet.xyz": Item("hyperliquid_testnet", Auth.hyperliquid),
+        "mainnet.zklighter.elliot.ai": Item("lighter", Auth.lighter),
+        "testnet.zklighter.elliot.ai": Item("lighter_testnet", Auth.lighter),
     }
 
 

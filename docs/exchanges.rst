@@ -636,3 +636,54 @@ DataStore
 * :class:`.HyperliquidDataStore`
 
 対応している WebSocket チャンネルはリファレンスの *ATTRIBUTES* をご覧ください。
+
+
+Lighter
+-------
+
+https://docs.lighter.xyz/
+
+Authentication
+~~~~~~~~~~~~~~
+
+* API 認証情報
+    * ``{"lighter": ["AUTH_TOKEN"]}`` (Mainnet)
+    * ``{"lighter_testnet": ["AUTH_TOKEN"]}`` (Testnet)
+    * ``{"lighter": ["ACCOUNT_INDEX", "API_KEY_INDEX", "API_PRIVATE_KEY"]}`` (Mainnet, 公式 Python SDK が必要)
+    * ``{"lighter_testnet": ["ACCOUNT_INDEX", "API_KEY_INDEX", "API_PRIVATE_KEY"]}`` (Testnet, 公式 Python SDK が必要)
+* HTTP 認証
+    Lighter の認証が必要な HTTP リクエストでは、 ``Authorization`` ヘッダが自動設定されます。
+
+    `API keys <https://apidocs.lighter.xyz/docs/api-keys>`_
+* WebSocket 認証
+    認証が必要な subscribe メッセージでは、 ``auth`` フィールドが自動設定されます。
+
+    `WebSocket <https://apidocs.lighter.xyz/docs/websocket-reference>`_
+
+.. note::
+
+    ``AUTH_TOKEN`` を直接渡す方式は、あらかじめ発行済みの auth token / read-only token を利用するためのものです。
+
+    ``ACCOUNT_INDEX``, ``API_KEY_INDEX``, ``API_PRIVATE_KEY`` を渡す方式では、pybotters が公式 Python SDK の signer を利用して短期の auth token を自動生成します。
+    この方式を使う場合は top-level module 名が ``lighter`` の公式 SDK を別途インストールしてください。
+
+.. warning::
+
+    ``sendTx`` / ``sendTxBatch`` に送るトランザクション本文の署名は pybotters では行いません。
+    公式 SDK などを使って ``tx_type`` / ``tx_info`` を生成してから pybotters で送信してください。
+
+WebSocket
+~~~~~~~~~
+
+* Ping-Pong
+    Lighter の application-level ping に対して ``{"type": "pong"}`` が自動送信されます。
+    また定期的な WebSocket ping frame も自動送信されます。
+
+    `WebSocket <https://apidocs.lighter.xyz/docs/websocket-reference>`_
+
+DataStore
+~~~~~~~~~
+
+* :class:`.LighterDataStore`
+
+主な対応チャンネルは ``order_book``, ``ticker``, ``market_stats``, ``trade``, ``account_all``, ``account_market``, ``account_all_orders``, ``notification``, ``account_all_positions`` です。

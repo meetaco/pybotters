@@ -840,6 +840,7 @@ async def test_heartbeat_bittrade(mocker: pytest_mock.MockerFixture, test_input)
     [
         (pybotters.ws.Heartbeat.binance,),
         (pybotters.ws.Heartbeat.aster,),
+        (pybotters.ws.Heartbeat.lighter,),
     ],
 )
 async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):
@@ -849,8 +850,24 @@ async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):
 
     await asyncio.wait_for(test_input(m_wsresp), timeout=5.0)
 
-    assert m_wsresp.pong.called
+    assert m_wsresp.pong.called or m_wsresp.ping.called
     assert m_asyncio_sleep.called
+
+
+@pytest.mark.asyncio
+async def test_onmessage_lighter_ping(
+    websocketapp: WebSocketApp,
+):
+    ws = AsyncMock()
+    ws._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    msg = aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, '{"type":"ping"}', None)
+
+    websocketapp._onmessage(msg, ws, [], [], [])
+
+    # send_json coroutine is created (and the call recorded) at the point
+    # create_task is invoked inside _onmessage, so the assertion is valid
+    # without awaiting the task.
+    ws.send_json.assert_called_once_with({"type": "pong"}, auth=None)
 
 
 @pytest.mark.asyncio
@@ -2007,6 +2024,55 @@ def test_msgsign_bybit(mocker: pytest_mock.MockerFixture, test_input, expected):
     assert test_input["data"] == expected["data"]
 
 
+def test_msgsign_lighter(mocker: pytest_mock.MockerFixture):
+    getter = mocker.patch(
+        "pybotters.ws.lighter.get_auth_token",
+        return_value="generated-auth-token",
+    )
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    m_wsresp._response._session = MagicMock()
+    data = {
+        "type": "subscribe",
+        "channel": "account_all_orders/12",
+    }
+
+    pybotters.ws.MessageSign.lighter(m_wsresp, data)
+
+    getter.assert_called_once_with(
+        m_wsresp._response._session,
+        "lighter",
+        "mainnet.zklighter.elliot.ai",
+    )
+    assert data["auth"] == "generated-auth-token"
+
+
+@pytest.mark.parametrize(
+    "test_input",
+    [
+        42,
+        {"type": "pong"},
+        {"type": "subscribe", "channel": "order_book/0"},
+        {
+            "type": "subscribe",
+            "channel": "account_all_orders/12",
+            "auth": "already-set",
+        },
+    ],
+)
+def test_msgsign_lighter_ignore(mocker: pytest_mock.MockerFixture, test_input):
+    getter = mocker.patch("pybotters.ws.lighter.get_auth_token")
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    m_wsresp._response._session = MagicMock()
+    expected = copy.deepcopy(test_input)
+
+    pybotters.ws.MessageSign.lighter(m_wsresp, test_input)
+
+    assert test_input == expected
+    assert not getter.called
+
+
 @pytest.mark.parametrize(
     ("test_input", "expected"),
     [
@@ -2130,3 +2196,19 @@ def test_msgsign_hyperliquid_ignore(test_input):
     pybotters.ws.MessageSignHosts.items[url.host].func(m_wsresp, test_input)
 
     assert test_input == expected
+
+
+def test_msgsign_lighter_static_api_name_error(mocker: pytest_mock.MockerFixture):
+    # ws.py line 1008: api_name is not a str
+    item = mocker.MagicMock()
+    item.name = lambda: "lighter"  # callable, not str
+    mocker.patch.dict(
+        pybotters.ws.MessageSignHosts.items,
+        {"mainnet.zklighter.elliot.ai": item},
+    )
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    data = {"type": "subscribe", "channel": "account_all_orders/12"}
+
+    with pytest.raises(TypeError, match="static API name"):
+        pybotters.ws.MessageSign.lighter(m_wsresp, data)

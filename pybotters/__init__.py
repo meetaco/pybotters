@@ -23,6 +23,7 @@ from .models.coincheck import CoincheckDataStore, CoincheckPrivateDataStore
 from .models.gmocoin import GMOCoinDataStore
 from .models.hyperliquid import HyperliquidDataStore
 from .models.kucoin import KuCoinDataStore
+from .models.lighter import LighterDataStore
 from .models.okx import OKXDataStore
 from .models.phemex import PhemexDataStore
 from .store import DataStore, DataStoreCollection, StoreChange, StoreStream
@@ -59,6 +60,7 @@ __all__: tuple[str, ...] = (
     "CoincheckPrivateDataStore",
     "GMOCoinDataStore",
     "HyperliquidDataStore",
+    "LighterDataStore",
     "KuCoinDataStore",
     "OKXDataStore",
     "PhemexDataStore",
