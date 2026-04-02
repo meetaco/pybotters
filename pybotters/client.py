@@ -67,6 +67,10 @@ class Client:
 
     async def close(self) -> None:
         """Close client session."""
+        # Helper cleanup is imported lazily to avoid a circular import with ws.
+        from .helpers import lighter
+
+        await lighter.close_sdk_clients(self._session)
         await self._session.close()
 
     def _request(
