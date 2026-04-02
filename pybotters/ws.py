@@ -272,6 +272,8 @@ class WebSocketApp:
                 for hdlr in hdlr_json:
                     self._loop.call_soon(hdlr, json_data, ws)
 
+        # Lighter sends application-level ping frames as JSON text, so respond
+        # even when the user did not register a JSON handler.
         if (
             isinstance(json_data, dict)
             and json_data.get("type") == "ping"
@@ -444,6 +446,7 @@ class Heartbeat:
 
     @staticmethod
     async def lighter(ws: ClientWebSocketResponse):
+        """Send websocket ping frames for Lighter."""
         while not ws.closed:
             await ws.ping()
             await asyncio.sleep(60.0)
@@ -1007,11 +1010,11 @@ class MessageSign:
         if not isinstance(api_name, str):
             raise TypeError("Lighter auth requires a static API name")
 
-        data["auth"] = lighter.get_auth_token(
-            ws._response._session,  # type: ignore[arg-type]
-            api_name,
-            url.host,
-        )
+        session = ws._response._session
+        if session is None:
+            raise RuntimeError("Lighter auth requires an active client session")
+
+        data["auth"] = lighter.get_auth_token(session, api_name, url.host)
 
 
 class MessageSignHosts:

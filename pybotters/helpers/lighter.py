@@ -97,6 +97,17 @@ def get_auth_token(
     *,
     deadline: int = _DEFAULT_AUTH_TOKEN_EXPIRY,
 ) -> str:
+    """Return a Lighter auth token.
+
+    Supported credentials are either a pre-generated token or a tuple used to
+    build one with the official SDK:
+
+    * ``["AUTH_TOKEN"]``
+    * ``["ACCOUNT_INDEX", "API_KEY_INDEX", "API_PRIVATE_KEY"]``
+
+    A direct token can also be passed in the three-item form
+    ``(token, b"", "")`` to match the encoding used by :class:`pybotters.Client`.
+    """
     credentials = session.__dict__["_apis"][api_name]
 
     # Pre-generated auth token or read-only token.
@@ -114,6 +125,8 @@ def get_auth_token(
 
     clients = session.__dict__.setdefault("_lighter_sdk_clients", {})
     signer_client = clients.get(cache_key)
+    # api_key_index is reused when we hit the cache; _build_signer_client may
+    # replace it if the signer client needs to be created from scratch.
     api_key_index = _coerce_int(credentials[1])
     if signer_client is None:
         signer_client, api_key_index = _build_signer_client(session, api_name, host)

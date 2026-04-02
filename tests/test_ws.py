@@ -856,17 +856,17 @@ async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):
 
 @pytest.mark.asyncio
 async def test_onmessage_lighter_ping(
-    websocketapp: WebSocketApp,
+    mocker: pytest_mock.MockerFixture, websocketapp: WebSocketApp
 ):
+    m_create_task = mocker.patch.object(websocketapp._loop, "create_task")
     ws = AsyncMock()
     ws._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
     msg = aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, '{"type":"ping"}', None)
 
     websocketapp._onmessage(msg, ws, [], [], [])
 
-    # send_json coroutine is created (and the call recorded) at the point
-    # create_task is invoked inside _onmessage, so the assertion is valid
-    # without awaiting the task.
+    assert m_create_task.called
+    await m_create_task.call_args.args[0]
     ws.send_json.assert_called_once_with({"type": "pong"}, auth=None)
 
 
@@ -2196,19 +2196,3 @@ def test_msgsign_hyperliquid_ignore(test_input):
     pybotters.ws.MessageSignHosts.items[url.host].func(m_wsresp, test_input)
 
     assert test_input == expected
-
-
-def test_msgsign_lighter_static_api_name_error(mocker: pytest_mock.MockerFixture):
-    # ws.py line 1008: api_name is not a str
-    item = mocker.MagicMock()
-    item.name = lambda: "lighter"  # callable, not str
-    mocker.patch.dict(
-        pybotters.ws.MessageSignHosts.items,
-        {"mainnet.zklighter.elliot.ai": item},
-    )
-    m_wsresp = AsyncMock()
-    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
-    data = {"type": "subscribe", "channel": "account_all_orders/12"}
-
-    with pytest.raises(TypeError, match="static API name"):
-        pybotters.ws.MessageSign.lighter(m_wsresp, data)

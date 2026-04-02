@@ -80,7 +80,8 @@ class LighterDataStore(DataStoreCollection):
         if type_ in {"connected", "ping", "pong"}:
             return
         if type_ == "error":
-            logger.warning(msg)
+            error = msg.get("error")
+            logger.warning(error if isinstance(error, str) else msg)
             return
 
         channel = msg.get("channel")
@@ -428,6 +429,13 @@ class AccountTx(DataStore):
 
 
 class AccountAllOrders(DataStore):
+    """Flattened account_all_orders snapshot store.
+
+    Lighter returns orders nested by market_id, so the store expands each order
+    into an individual record keyed by account_index, market_id, and order_index.
+    Snapshot messages replace the full account view.
+    """
+
     _KEYS = ["account_index", "market_id", "order_index"]
 
     def _onmessage(self, msg: Item) -> None:
@@ -523,6 +531,12 @@ class AccountOrders(DataStore):
 
 
 class AccountAllTrades(DataStore):
+    """Flattened account_all_trades append-only store.
+
+    The API nests trades by market_id, so each trade is stored separately and
+    indexed by account_index, market_id, and trade_id.
+    """
+
     _KEYS = ["account_index", "market_id", "trade_id"]
     _MAXLEN = 99999
 
@@ -550,6 +564,11 @@ class AccountAllTrades(DataStore):
 
 
 class AccountAllPositions(DataStore):
+    """Flattened account_all_positions snapshot store.
+
+    Each message carries the full current position set per account.
+    """
+
     _KEYS = ["account_index", "market_id"]
 
     def _onmessage(self, msg: Item) -> None:
@@ -577,6 +596,11 @@ class AccountAllPositions(DataStore):
 
 
 class AccountAllAssets(DataStore):
+    """Flattened account_all_assets snapshot store.
+
+    Each message carries the full current asset set per account.
+    """
+
     _KEYS = ["account_index", "asset_id"]
 
     def _onmessage(self, msg: Item) -> None:
@@ -604,6 +628,11 @@ class AccountAllAssets(DataStore):
 
 
 class AccountSpotAvgEntryPrices(DataStore):
+    """Flattened account_spot_avg_entry_prices incremental store.
+
+    The API updates one asset at a time, so existing entries are merged.
+    """
+
     _KEYS = ["account_index", "asset_id"]
 
     def _onmessage(self, msg: Item) -> None:
