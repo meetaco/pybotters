@@ -2071,6 +2071,42 @@ def test_msgsign_lighter_ignore(mocker: pytest_mock.MockerFixture, test_input):
     assert not getter.called
 
 
+def test_msgsign_lighter_static_api_name_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setitem(
+        pybotters.ws.MessageSignHosts.items,
+        "mainnet.zklighter.elliot.ai",
+        pybotters.ws.Item(
+            lambda *args, **kwargs: "lighter",
+            pybotters.ws.MessageSign.lighter,
+        ),
+    )
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    m_wsresp._response._session = MagicMock()
+    data = {
+        "type": "subscribe",
+        "channel": "account_all_orders/12",
+    }
+
+    with pytest.raises(TypeError, match="static API name"):
+        pybotters.ws.MessageSign.lighter(m_wsresp, data)
+
+
+def test_msgsign_lighter_missing_session():
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    m_wsresp._response._session = None
+    data = {
+        "type": "subscribe",
+        "channel": "account_all_orders/12",
+    }
+
+    with pytest.raises(RuntimeError, match="active client session"):
+        pybotters.ws.MessageSign.lighter(m_wsresp, data)
+
+
 @pytest.mark.parametrize(
     ("test_input", "expected"),
     [
