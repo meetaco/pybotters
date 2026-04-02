@@ -7,7 +7,7 @@ import json
 import logging
 import zlib
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, call
 
 import aiohttp
@@ -2078,7 +2078,7 @@ def test_msgsign_lighter_static_api_name_error(
         pybotters.ws.MessageSignHosts.items,
         "mainnet.zklighter.elliot.ai",
         pybotters.ws.Item(
-            lambda *args, **kwargs: "lighter",
+            cast("str", lambda *args, **kwargs: "lighter"),
             pybotters.ws.MessageSign.lighter,
         ),
     )
