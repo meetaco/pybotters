@@ -6,6 +6,7 @@ import functools
 import json
 import logging
 import zlib
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, call
@@ -165,7 +166,12 @@ async def websocketapp(
 
     mocker.stop(m_run_forever)
 
-    return ws
+    try:
+        yield ws
+    finally:
+        ws._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ws._task
 
 
 @pytest.mark.asyncio
@@ -861,7 +867,6 @@ async def test_onmessage_lighter_ping(
     ws = AsyncMock()
     ws._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
     msg = aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, '{"type":"ping"}', None)
-
     websocketapp._onmessage(msg, ws, [], [], [])
 
     await asyncio.sleep(0)
