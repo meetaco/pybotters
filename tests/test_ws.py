@@ -836,6 +836,18 @@ async def test_heartbeat_kucoin_send_error():
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_kucoin_close_error():
+    m_wsresp = AsyncMock()
+    type(m_wsresp).closed = PropertyMock(return_value=False)
+    m_wsresp.send_str = AsyncMock(side_effect=Exception("boom"))
+    m_wsresp.close = AsyncMock(side_effect=Exception("close boom"))
+
+    await pybotters.ws.Heartbeat.kucoin(m_wsresp)
+
+    assert m_wsresp.close.called
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "test_input",
     [
