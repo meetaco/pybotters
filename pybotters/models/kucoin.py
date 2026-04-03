@@ -48,6 +48,9 @@ class KuCoinDataStore(DataStoreCollection):
         self._create("balanceevents", datastore_class=BalanceEvents)
         self._create("positions", datastore_class=Positions)
         self._endpoint = None
+        self._ping_interval = None
+        self._ping_timeout = None
+        self._ws_host = None
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
         """Initialize DataStore from HTTP response data.
@@ -71,7 +74,28 @@ class KuCoinDataStore(DataStoreCollection):
             ):
                 if resp.status != 200:
                     raise RuntimeError(f"Failed to get a websocket endpoint: {data}")
-                self._endpoint = self._create_endpoint(data["data"])
+                endpoint, host, ping_interval, ping_timeout = self._create_endpoint(
+                    data["data"]
+                )
+                self._endpoint = endpoint
+                self._ping_interval = ping_interval
+                self._ping_timeout = ping_timeout
+                self._ws_host = host
+                try:
+                    from pybotters.ws import register_kucoin_ws
+
+                    api_base = str(resp.url.origin())
+                    register_kucoin_ws(
+                        resp._session,
+                        host,
+                        api_base,
+                        resp.url.path,
+                        ping_interval,
+                        ping_timeout,
+                        resp.url.path.endswith("bullet-private"),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to register KuCoin ws info: {e}")
 
     def _onmessage(self, msg: Any, ws: ClientWebSocketResponse | None = None) -> None:
         if "topic" in msg:
@@ -343,8 +367,10 @@ class KuCoinDataStore(DataStoreCollection):
     def _create_endpoint(cls, data):
         token = data["token"]
         servers = data["instanceServers"]
-        id = str(uuid.uuid4())
+        connect_id = str(uuid.uuid4())
         endpoint, host = None, None
+        ping_interval = None
+        ping_timeout = None
 
         try:
             from pybotters.ws import HeartbeatHosts
@@ -354,6 +380,8 @@ class KuCoinDataStore(DataStoreCollection):
                 # HeartbeatHostsに登録してあるエンドポイントを優先して使う
                 if host in HeartbeatHosts.items:
                     endpoint = s["endpoint"]
+                    ping_interval = s.get("pingInterval", data.get("pingInterval"))
+                    ping_timeout = s.get("pingTimeout", data.get("pingTimeout"))
                     break
         except ImportError as e:
             logger.warning(
@@ -363,8 +391,16 @@ class KuCoinDataStore(DataStoreCollection):
         # HeartbeatHostsに登録してあるエンドポイントがなかった場合、一番最初のものを使う
         if endpoint is None:
             endpoint = servers[0]["endpoint"]
+            host = aiohttp.typedefs.URL(endpoint).host
+            ping_interval = servers[0].get("pingInterval", data.get("pingInterval"))
+            ping_timeout = servers[0].get("pingTimeout", data.get("pingTimeout"))
 
-        return f"{endpoint}?token={token}&acceptUserMessage=true&connectId={id}"
+        return (
+            f"{endpoint}?token={token}&acceptUserMessage=true&connectId={connect_id}",
+            host,
+            ping_interval,
+            ping_timeout,
+        )
 
 
 class _InsertStore(DataStore):
