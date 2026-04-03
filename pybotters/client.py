@@ -80,7 +80,7 @@ class Client:
         *,
         params: Mapping[str, Any] | None = None,
         data: dict[str, Any] | None = None,
-        auth: type[Auth] | None = Auth,
+        auth: Any = Auth,
         **kwargs: Any,
     ) -> RequestContextManager:
         if urlparse(url).scheme:

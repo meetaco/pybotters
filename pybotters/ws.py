@@ -902,13 +902,17 @@ class RequestLimit:
         session = cast("aiohttp.ClientSession", ws._response._session)
         async with ws._lock:
             await send_str
-            r = await session.get("https://api.coin.z.com/public/v1/status", auth=_Auth)
+            r = await session.get(
+                "https://api.coin.z.com/public/v1/status",
+                auth=cast("Any", _Auth),
+            )
             data = await r.json()
             before = datetime.datetime.fromisoformat(data["responsetime"][:-1])
             while True:
                 await asyncio.sleep(1.0)
                 r = await session.get(
-                    "https://api.coin.z.com/public/v1/status", auth=_Auth
+                    "https://api.coin.z.com/public/v1/status",
+                    auth=cast("Any", _Auth),
                 )
                 data = await r.json()
                 after = datetime.datetime.fromisoformat(data["responsetime"][:-1])
