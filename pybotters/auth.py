@@ -689,6 +689,7 @@ class Hosts:
         "api.hyperliquid-testnet.xyz": Item("hyperliquid_testnet", Auth.hyperliquid),
         "mainnet.zklighter.elliot.ai": Item("lighter", Auth.lighter),
         "testnet.zklighter.elliot.ai": Item("lighter_testnet", Auth.lighter),
+        "api.rh.lighter.xyz": Item("rhlighter", Auth.lighter),
     }
 
 
