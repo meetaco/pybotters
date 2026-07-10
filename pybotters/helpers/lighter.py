@@ -13,11 +13,13 @@ if TYPE_CHECKING:
 
 _DEFAULT_AUTH_TOKEN_EXPIRY = 10 * 60
 _AUTH_TOKEN_REFRESH_MARGIN = 30
+_RH_HOST_SUFFIX = ".rh.lighter.xyz"
 
 HOSTS = frozenset(
     {
         "mainnet.zklighter.elliot.ai",
         "testnet.zklighter.elliot.ai",
+        "api.rh.lighter.xyz",
     }
 )
 
@@ -46,6 +48,10 @@ def is_protected_channel(channel: str) -> bool:
     return channel.split(":", 1)[0].split("/", 1)[0] in PROTECTED_WS_CHANNELS
 
 
+def is_supported_host(host: str | None) -> bool:
+    return host in HOSTS or (isinstance(host, str) and host.endswith(_RH_HOST_SUFFIX))
+
+
 def _coerce_str(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode()
@@ -59,7 +65,7 @@ def _coerce_int(value: Any) -> int:
 
 
 def _base_url_from_host(host: str | None) -> str:
-    if host not in HOSTS:
+    if not is_supported_host(host):
         raise LighterAuthError(f"Unsupported Lighter host: {host!r}")
     return f"https://{host}"
 

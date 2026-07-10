@@ -895,11 +895,19 @@ async def test_heartbeat_frame(mocker: pytest_mock.MockerFixture, test_input):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        URL("wss://mainnet.zklighter.elliot.ai/stream"),
+        URL("wss://api.rh.lighter.xyz/stream"),
+    ],
+)
 async def test_onmessage_lighter_ping(
     websocketapp: WebSocketApp,
+    url: URL,
 ):
     ws = AsyncMock()
-    ws._response.url = URL("wss://mainnet.zklighter.elliot.ai/stream")
+    ws._response.url = url
     msg = aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, '{"type":"ping"}', None)
     websocketapp._onmessage(msg, ws, [], [], [])
 
@@ -2080,6 +2088,29 @@ def test_msgsign_lighter(mocker: pytest_mock.MockerFixture):
         m_wsresp._response._session,
         "lighter",
         "mainnet.zklighter.elliot.ai",
+    )
+    assert data["auth"] == "generated-auth-token"
+
+
+def test_msgsign_rhlighter(mocker: pytest_mock.MockerFixture):
+    getter = mocker.patch(
+        "pybotters.ws.lighter.get_auth_token",
+        return_value="generated-auth-token",
+    )
+    m_wsresp = AsyncMock()
+    m_wsresp._response.url = URL("wss://api.rh.lighter.xyz/stream")
+    m_wsresp._response._session = MagicMock()
+    data = {
+        "type": "subscribe",
+        "channel": "account_all_orders/12",
+    }
+
+    pybotters.ws.MessageSign.lighter(m_wsresp, data)
+
+    getter.assert_called_once_with(
+        m_wsresp._response._session,
+        "rhlighter",
+        "api.rh.lighter.xyz",
     )
     assert data["auth"] == "generated-auth-token"
 

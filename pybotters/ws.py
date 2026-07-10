@@ -261,7 +261,7 @@ class WebSocketApp:
                 self._loop.call_soon(hdlr, msg.data, ws)
 
         if msg.type in {aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY} and (
-            hdlr_json or ws._response.url.host in lighter.HOSTS
+            hdlr_json or lighter.is_supported_host(ws._response.url.host)
         ):
             try:
                 json_data = msg.json()
@@ -277,7 +277,7 @@ class WebSocketApp:
         if (
             isinstance(json_data, dict)
             and json_data.get("type") == "ping"
-            and ws._response.url.host in lighter.HOSTS
+            and lighter.is_supported_host(ws._response.url.host)
         ):
             self._loop.create_task(ws.send_json({"type": "pong"}, auth=None))
 
@@ -827,6 +827,7 @@ class HeartbeatHosts:
         "api.hyperliquid-testnet.xyz": Heartbeat.hyperliquid,
         "mainnet.zklighter.elliot.ai": Heartbeat.lighter,
         "testnet.zklighter.elliot.ai": Heartbeat.lighter,
+        "api.rh.lighter.xyz": Heartbeat.lighter,
     }
 
 
@@ -1045,4 +1046,5 @@ class MessageSignHosts:
         ),
         "mainnet.zklighter.elliot.ai": Item("lighter", MessageSign.lighter),
         "testnet.zklighter.elliot.ai": Item("lighter_testnet", MessageSign.lighter),
+        "api.rh.lighter.xyz": Item("rhlighter", MessageSign.lighter),
     }
